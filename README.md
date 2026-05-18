@@ -1,24 +1,10 @@
 # opencode-free-proxy
 
-Proxy server that exposes [OpenCode](https://opencode.ai) free-tier AI models through standard **OpenAI** and **Anthropic** APIs.
+Free AI models from [OpenCode](https://opencode.ai) exposed as standard OpenAI and Anthropic APIs.
 
-Run it on any VPS and point your tools at it — they get free access to DeepSeek V4 Flash, MiniMax M2.5, Qwen 3.6, and more.
+One server — works with any tool that speaks OpenAI or Anthropic format: Cursor, Continue, Cline, Claude Code, aider, opencode CLI, raw `curl`, whatever.
 
-## How it works
-
-```
-Your app / IDE / CLI
-        │
-        ▼
-  opencode-free-proxy (this server)
-        │
-        ▼  HTTPS + x-opencode-* auth headers
-  opencode.ai/zen/v1/  (free tier)
-```
-
-The proxy adds the required `x-opencode-*` authentication headers that the Zen API expects (discovered via reverse engineering the opencode binary). Without these headers, even `Authorization: Bearer public` gets rejected.
-
-## Quick start
+## 30-second setup
 
 ```bash
 git clone https://github.com/bigdata2211it-web/opencode-free-proxy.git
@@ -27,63 +13,79 @@ npm install
 node server.mjs
 ```
 
-On first run, the server generates `api-keys.json` with two keys: `admin` and `user-default`. Use these as your API key when connecting.
+Done. Server is at `http://localhost:6446`. API keys are in `api-keys.json` (auto-generated on first run).
 
-## Endpoints
+## What you get
 
-| Method | Path | Format | Description |
-|--------|------|--------|-------------|
-| `POST` | `/v1/chat/completions` | OpenAI | Chat completions (streaming + non-streaming) |
-| `POST` | `/v1/messages` | Anthropic | Messages API (streaming + non-streaming) |
-| `GET` | `/v1/models` | OpenAI | List available models |
-| `GET` | `/health` | — | Health check |
-
-## Authentication
-
-Set your API key in requests:
-
-```bash
-# OpenAI format
-curl http://localhost:9090/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"Hello"}]}'
-
-# Anthropic format
-curl http://localhost:9090/v1/messages \
-  -H "x-api-key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"Hello"}],"max_tokens":1024}'
-```
-
-Both `Authorization: Bearer KEY` and `x-api-key: KEY` headers are accepted on all endpoints.
-
-## Available models
-
-| Model | Backend | Status |
-|-------|---------|--------|
-| `deepseek-v4-flash-free` | DeepSeek V4 Flash | Stable |
-| `big-pickle` | DeepSeek V4 Flash | Stable |
-| `minimax-m2.5-free` | MiniMax M2.5 | Stable |
-| `nemotron-3-super-free` | NVIDIA Nemotron | Flaky |
+| Model | What it is | Reliability |
+|-------|-----------|-------------|
+| `deepseek-v4-flash-free` | DeepSeek V4 Flash | Solid |
+| `big-pickle` | DeepSeek V4 Flash (alias) | Solid |
+| `minimax-m2.5-free` | MiniMax M2.5 | Solid |
+| `nemotron-3-super-free` | NVIDIA Nemotron 3 Super | Hit or miss |
 | `qwen3.6-plus-free` | Qwen 3.6 Plus | Intermittent |
 
-## Use with opencode CLI
+All models support streaming, tool calls, and system messages.
+
+## API
+
+### OpenAI format — `POST /v1/chat/completions`
+
+```bash
+curl http://localhost:6446/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-flash-free",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
+  }'
+```
+
+### Anthropic format — `POST /v1/messages`
+
+```bash
+curl http://localhost:6446/v1/messages \
+  -H "x-api-key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-flash-free",
+    "system": "You are helpful.",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 1024,
+    "stream": true
+  }'
+```
+
+### Other endpoints
+
+| Method | Path | What |
+|--------|------|------|
+| `GET` | `/v1/models` | List models |
+| `GET` | `/health` | Health + version |
+
+### Auth
+
+Both `Authorization: Bearer KEY` and `x-api-key: KEY` work on all endpoints.
+
+## Use with tools
+
+### opencode CLI
 
 Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
   "provider": {
-    "oc-free": {
-      "name": "oc-free",
+    "free": {
+      "name": "free",
       "type": "openai",
       "apiKey": "YOUR_KEY",
-      "baseURL": "http://YOUR_SERVER:9090/v1",
+      "baseURL": "http://localhost:6446/v1",
       "models": {
-        "oc-free/deepseek-v4-flash-free": {
-          "name": "oc-free/deepseek-v4-flash-free",
+        "free/deepseek-v4-flash-free": {
           "id": "deepseek-v4-flash-free",
+          "name": "free/deepseek-v4-flash-free",
           "attachment": true,
           "reasoning": true
         }
@@ -93,41 +95,92 @@ Add to `~/.config/opencode/opencode.json`:
 }
 ```
 
-## Use with Claude Code / Cursor / etc.
+### Cursor / Continue / Cline
 
-Point any tool that supports custom OpenAI or Anthropic endpoints at `http://YOUR_SERVER:9090`.
+- Base URL: `http://YOUR_HOST:6446/v1`
+- API Key: your key from `api-keys.json`
+- Model: `deepseek-v4-flash-free`
+
+### Claude Code (Anthropic format)
+
+- Base URL: `http://YOUR_HOST:6446`
+- API Key: your key from `api-keys.json`
+- Works with `/v1/messages` endpoint
+
+## Deploy on a VPS
+
+```bash
+# On your VPS
+git clone https://github.com/bigdata2211it-web/opencode-free-proxy.git
+cd opencode-free-proxy
+npm install
+node server.mjs          # foreground
+# or
+nohup node server.mjs > proxy.log 2>&1 &   # background
+```
+
+If your VPS doesn't expose port 6446, use an SSH tunnel:
+
+```bash
+ssh -L 6446:127.0.0.1:6446 user@your-vps
+# Now http://localhost:6446 works locally
+```
+
+### systemd service (optional)
+
+```ini
+# /etc/systemd/system/opencode-proxy.service
+[Unit]
+Description=OpenCode Free Proxy
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/opencode-proxy
+ExecStart=/usr/bin/node server.mjs
+Restart=always
+RestartSec=5
+Environment=PROXY_PORT=6446
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now opencode-proxy
+```
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PROXY_PORT` | `9090` | Server port |
-| `KEYS_FILE` | `./api-keys.json` | Path to API keys file |
+| Variable | Default | What |
+|----------|---------|------|
+| `PROXY_PORT` | `6446` | Server port |
+| `KEYS_FILE` | `./api-keys.json` | API keys file path |
 
-## SSH tunnel (if server port not exposed)
+## How it works
 
-```bash
-ssh -L 19090:127.0.0.1:9090 user@your-server
-# Then use http://localhost:19090/v1 as base URL
+```
+Your tool (Cursor, CLI, curl, etc.)
+        │
+        ▼
+  opencode-free-proxy        ← this server, translates formats
+        │
+        ▼  HTTPS
+  opencode.ai/zen/v1/       ← free tier API
 ```
 
-## How Zen API auth works
+The proxy adds `x-opencode-*` authentication headers that the Zen API requires. These were discovered by reverse engineering the opencode binary — without them, even `Authorization: Bearer public` gets rejected with `AuthError`.
 
-The opencode binary (Bun runtime) sets these headers for free-tier requests:
+### Zen API auth headers (for the curious)
 
-- `Authorization: Bearer public`
-- `User-Agent: opencode/<version> ai-sdk/provider-utils/...`
-- `x-opencode-client: cli`
-- `x-opencode-project: global`
-- `x-opencode-request: msg_<unique_id>`
-- `x-opencode-session: ses_<unique_id>`
-
-Without the `x-opencode-*` headers, the API returns `AuthError: Missing API key`.
-
-This was discovered by:
-1. Running `BUN_CONFIG_VERBOSE_FETCH=curl opencode run` to capture HTTP requests
-2. Decompiling the bundled JS chunks in the Bun binary
-3. Finding the provider plugin that sets `apiKey = "public"` for free models
+```
+Authorization: Bearer public
+User-Agent: opencode/1.15.0 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.13
+x-opencode-client: cli
+x-opencode-project: global
+x-opencode-request: msg_<unique_id>
+x-opencode-session: ses_<unique_id>
+```
 
 ## License
 
