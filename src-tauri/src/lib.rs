@@ -40,6 +40,77 @@ pub struct SpeedTestRequest {
     pub model: String,
 }
 
+#[derive(Deserialize)]
+pub struct ImportRequest {
+    pub model: String,
+    pub api_key: String,
+    pub tool: String, // "claude" | "codex" | "ccswitch"
+}
+
+#[tauri::command]
+async fn import_to_tool(req: ImportRequest) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let base_url = "http://localhost:6446";
+    let base_url_v1 = "http://localhost:6446/v1";
+
+    match req.tool.as_str() {
+        "claude" => {
+            // ~/.claude/settings.json
+            let path = home.join(".claude/settings.json");
+            let _ = std::fs::create_dir_all(path.parent().unwrap());
+            let config = serde_json::json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_API_KEY": req.api_key,
+                    "ANTHROPIC_MODEL": req.model,
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": req.model,
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": req.model,
+                    "API_TIMEOUT_MS": "3000000"
+                }
+            });
+            let content = serde_json::to_string_pretty(&config)
+                .map_err(|e| format!("Serialize error: {}", e))?;
+            std::fs::write(&path, content)
+                .map_err(|e| format!("Write error: {}", e))?;
+            Ok(format!("✅ 已导入到 Claude Code ({})", path.display()))
+        }
+        "codex" => {
+            // ~/.codex/config.toml
+            let path = home.join(".codex/config.toml");
+            let _ = std::fs::create_dir_all(path.parent().unwrap());
+            let content = format!(
+                "base_url = \"{}\"\nmodel = \"{}\"\napi_key = \"{}\"\n",
+                base_url_v1, req.model, req.api_key
+            );
+            std::fs::write(&path, content)
+                .map_err(|e| format!("Write error: {}", e))?;
+            Ok(format!("✅ 已导入到 Codex ({})", path.display()))
+        }
+        "ccswitch" => {
+            // ~/.cc-cast/config.json
+            let path = home.join(".cc-cast/config.json");
+            let _ = std::fs::create_dir_all(path.parent().unwrap());
+            let config = serde_json::json!({
+                "profiles": {
+                    "OpenCode Free": {
+                        "env": {
+                            "ANTHROPIC_BASE_URL": base_url,
+                            "ANTHROPIC_AUTH_TOKEN": req.api_key,
+                            "ANTHROPIC_MODEL": req.model
+                        }
+                    }
+                }
+            });
+            let content = serde_json::to_string_pretty(&config)
+                .map_err(|e| format!("Serialize error: {}", e))?;
+            std::fs::write(&path, content)
+                .map_err(|e| format!("Write error: {}", e))?;
+            Ok(format!("✅ 已导入到 CCSwitch ({})", path.display()))
+        }
+        other => Err(format!("Unknown tool: {}. Supported: claude, codex, ccswitch", other)),
+    }
+}
+
 // ── Tauri Commands ────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -245,6 +316,7 @@ pub fn run() {
             add_custom_model,
             remove_custom_model,
             run_speed_test_cmd,
+            import_to_tool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

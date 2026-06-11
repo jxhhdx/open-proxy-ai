@@ -127,11 +127,50 @@ function renderModels(models) {
           <span>等待测速</span>
         </div>
       </div>
-      ${!m.builtin
-        ? `<button onclick="removeCustomModel('${escapeHtml(m.id)}')" class="flex-shrink-0 px-2 py-1 rounded text-xs text-red-400 bg-red-400/10 hover:bg-red-400/20 transition-all cursor-pointer">✕</button>`
-        : ''}
+      <div class="flex items-center gap-1">
+        <div class="relative" id="import-menu-${escapeHtml(m.id)}">
+          <button onclick="toggleImportMenu('${escapeHtml(m.id)}')" class="px-2 py-1 rounded text-xs text-white bg-[#2a2d3e] hover:bg-[#3a3d4e] transition-all cursor-pointer whitespace-nowrap">导入</button>
+          <div id="import-dropdown-${escapeHtml(m.id)}" class="hidden absolute right-0 top-full mt-1 z-10 bg-surface2 border border-border rounded-lg shadow-xl py-1 min-w-[140px]">
+            <button onclick="importModel('${escapeHtml(m.id)}', 'claude')" class="block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10 transition-colors cursor-pointer">🤖 Claude Code</button>
+            <button onclick="importModel('${escapeHtml(m.id)}', 'codex')" class="block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10 transition-colors cursor-pointer">△ Codex</button>
+            <button onclick="importModel('${escapeHtml(m.id)}', 'ccswitch')" class="block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10 transition-colors cursor-pointer">🔄 CCSwitch</button>
+          </div>
+        </div>
+        ${!m.builtin
+          ? `<button onclick="removeCustomModel('${escapeHtml(m.id)}')" class="flex-shrink-0 px-2 py-1 rounded text-xs text-red-400 bg-red-400/10 hover:bg-red-400/20 transition-all cursor-pointer">✕</button>`
+          : ''}
+      </div>
     </div>
   `).join('');
+}
+
+// ── Import to Tool ──────────────────────────
+function toggleImportMenu(modelId) {
+  const dropdown = document.getElementById('import-dropdown-' + modelId);
+  if (!dropdown) return;
+  const isHidden = dropdown.classList.contains('hidden');
+  document.querySelectorAll('[id^="import-dropdown-"]').forEach(el => el.classList.add('hidden'));
+  if (isHidden) dropdown.classList.remove('hidden');
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('[id^="import-menu-"]')) {
+    document.querySelectorAll('[id^="import-dropdown-"]').forEach(el => el.classList.add('hidden'));
+  }
+});
+
+async function importModel(modelId, tool) {
+  const dropdown = document.getElementById('import-dropdown-' + modelId);
+  if (dropdown) dropdown.classList.add('hidden');
+  try {
+    const status = await invoke('get_status');
+    const apiKey = status.keys.length > 0 ? status.keys[0].key : '';
+    if (!apiKey) { showToast('❌ 没有可用的 API Key'); return; }
+    const result = await invoke('import_to_tool', {
+      req: { model: modelId, api_key: apiKey, tool }
+    });
+    showToast(result);
+  } catch (e) { showToast('❌ ' + e); }
 }
 
 // ── Batch Speed Test ──────────────────────────
