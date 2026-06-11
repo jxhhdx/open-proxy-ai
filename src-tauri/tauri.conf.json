@@ -3,10 +3,12 @@
   "version": "0.9.0",
   "identifier": "com.opencode.free-proxy",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
         "title": "OpenCode Free Proxy",

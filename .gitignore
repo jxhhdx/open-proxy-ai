@@ -5,6 +5,7 @@ src-tauri/gen/
 # ── Node.js ────────────────────────────────────────
 node_modules/
 package-lock.json
+dist/
 
 # ── Config ─────────────────────────────────────────
 api-keys.json
@@ -14,3 +15,6 @@ api-keys.json
 # ── OS ─────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+node_modules_old/
+node_modules
+node_modules_old
