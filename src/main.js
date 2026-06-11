@@ -6,6 +6,7 @@ const { invoke, listen } = window.__TAURI__.core;
 
 // ── State ──────────────────────────────────────
 let testingModels = new Set();
+let isRefreshing = false;
 
 // ── Init ───────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -44,18 +45,33 @@ async function copyText(text) {
 
 // ── Refresh Status ─────────────────────────────
 async function refreshStatus() {
+  if (isRefreshing) return;
+  isRefreshing = true;
+
+  const refreshBtn = document.getElementById('refreshBtn');
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
+
+  if (refreshBtn) refreshBtn.disabled = true;
   statusDot.className = 'status-dot loading';
   statusText.textContent = '加载中...';
 
   try {
     const status = await invoke('get_status');
     updateStatusUI(status);
-    await loadModels();
+    const models = await loadModels();
+    // 自动批量测速所有模型
+    if (models && models.length > 0) {
+      showToast(`⏳ 正在批量测速 ${models.length} 个模型...`);
+      await batchTestAllModels(models);
+      showToast('✅ 批量测速完成');
+    }
   } catch (e) {
     statusDot.className = 'status-dot offline';
     statusText.textContent = '连接失败: ' + e;
+  } finally {
+    isRefreshing = false;
+    if (refreshBtn) refreshBtn.disabled = false;
   }
 }
 
@@ -94,9 +110,18 @@ async function loadModels() {
     const models = await invoke('get_models');
     document.getElementById('modelCount').textContent = models.length;
     renderModels(models);
+    return models;
   } catch (e) {
     document.getElementById('modelList').innerHTML =
       `<div class="model-empty">加载失败: ${e}</div>`;
+    return null;
+  }
+}
+
+// ── Batch Speed Test ──────────────────────────
+async function batchTestAllModels(models) {
+  for (const m of models) {
+    await testModel(m.id);
   }
 }
 

@@ -54,6 +54,18 @@ h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
 .status-dot.loading { background: var(--orange); animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
+/* URL Display */
+.url-display {
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  padding: 1px 8px; border-radius: 4px;
+  background: var(--surface2); border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+.url-display:hover { border-color: var(--accent); background: rgba(108,140,255,0.08); }
+.url-display code { font-size: 12px; color: var(--accent); }
+.url-display .copy-hint { font-size: 11px; opacity: 0; transition: opacity 0.15s; }
+.url-display:hover .copy-hint { opacity: 1; }
+
 /* Buttons */
 .btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px;

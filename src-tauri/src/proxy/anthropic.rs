@@ -197,6 +197,7 @@ pub fn openai_to_anthropic(
 }
 
 /// Streaming state for converting OpenAI SSE → Anthropic SSE on-the-fly.
+#[allow(dead_code)]
 pub struct AnthropicStreamConverter {
     pub msg_id: String,
     pub model: String,
