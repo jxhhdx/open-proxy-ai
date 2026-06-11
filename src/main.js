@@ -205,7 +205,7 @@ function renderPool(entries) {
         </div>
       </div>
       <div class="flex items-center gap-1 flex-shrink-0">
-        <div class="relative" id="import-menu-${escapeHtml(e.name)}">
+        <div class="relative" id="import-menu-${escapeHtml(e.name)}" data-model-name="${escapeHtml(e.model_name || e.name)}">
           <button onclick="toggleImportMenu('${escapeHtml(e.name)}')" class="px-2 py-1 rounded text-xs text-white bg-[#2a2d3e] hover:bg-[#3a3d4e] transition-all cursor-pointer">导入</button>
           <div id="import-dropdown-${escapeHtml(e.name)}" class="hidden absolute right-0 top-full mt-1 z-10 bg-surface2 border border-border rounded-lg shadow-xl py-1 min-w-[120px]">
             <button onclick="importModel('${escapeHtml(e.name)}', 'claude')" class="block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10 cursor-pointer">🤖 Claude</button>
@@ -305,7 +305,10 @@ async function importModel(name, tool) {
     const status = await invoke('get_status');
     const key = status.keys[0]?.key;
     if (!key) { showToast('❌ 无可用 Key'); return; }
-    const r = await invoke('import_to_tool', { req: { model: name, api_key: key, tool } });
+
+    const menu = document.getElementById('import-menu-' + name);
+    const modelName = menu ? menu.dataset.modelName || name : name;
+    const r = await invoke('import_to_tool', { req: { model: name, model_name: modelName, api_key: key, tool } });
     showToast(r);
   } catch (e) { showToast('❌ ' + e); }
 }

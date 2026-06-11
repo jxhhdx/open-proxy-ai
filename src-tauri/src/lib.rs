@@ -44,6 +44,8 @@ pub struct SpeedTestRequest {
 #[derive(Deserialize)]
 pub struct ImportRequest {
     pub model: String,
+    #[serde(default)]
+    pub model_name: String,
     pub api_key: String,
     pub tool: String, // "claude" | "codex" | "ccswitch"
 }
@@ -193,9 +195,9 @@ async fn import_to_tool(
                 "env": {
                     "ANTHROPIC_BASE_URL": base_url,
                     "ANTHROPIC_API_KEY": req.api_key,
-                    "ANTHROPIC_MODEL": req.model,
-                    "ANTHROPIC_DEFAULT_SONNET_MODEL": req.model,
-                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": req.model,
+                    "ANTHROPIC_MODEL": api_model(&req),
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": api_model(&req),
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": api_model(&req),
                     "API_TIMEOUT_MS": "3000000"
                 }
             });
@@ -211,7 +213,7 @@ async fn import_to_tool(
             let _ = std::fs::create_dir_all(path.parent().unwrap());
             let content = format!(
                 "base_url = \"{}\"\nmodel = \"{}\"\napi_key = \"{}\"\n",
-                base_url_v1, req.model, req.api_key
+                base_url_v1, api_model(&req), req.api_key
             );
             std::fs::write(&path, content)
                 .map_err(|e| format!("Write error: {}", e))?;
@@ -222,7 +224,7 @@ async fn import_to_tool(
             let encoded_name = urlencoding(&display_name);
             let encoded_endpoint = urlencoding(base_url);
             let encoded_key = urlencoding(&req.api_key);
-            let encoded_model = urlencoding(&req.model);
+            let encoded_model = urlencoding(&api_model(&req));
             let encoded_homepage = urlencoding("https://github.com/jxhhdx/opencode-free-proxy");
 
             let deep_link = format!(
@@ -259,7 +261,7 @@ async fn import_to_tool(
                         "env": {
                             "ANTHROPIC_BASE_URL": base_url,
                             "ANTHROPIC_AUTH_TOKEN": req.api_key,
-                            "ANTHROPIC_MODEL": req.model
+                            "ANTHROPIC_MODEL": api_model(&req)
                         }
                     }
                 }
@@ -284,6 +286,12 @@ fn urlencoding(s: &str) -> String {
     }
     out
 }
+
+/// Use model_name if provided, fall back to display name.
+fn api_model(req: &ImportRequest) -> String {
+    if req.model_name.is_empty() { req.model.clone() } else { req.model_name.clone() }
+}
+
 
 // ── Tauri Commands ────────────────────────────────────────────────────
 
