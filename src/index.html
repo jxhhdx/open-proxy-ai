@@ -68,26 +68,6 @@
         <div class="model-empty" id="modelEmpty">加载模型中...</div>
       </div>
     </section>
-
-    <!-- Quick Start -->
-    <section class="card">
-      <div class="card-header">
-        <h2><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M5 11l4-4 4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg> 快速开始</h2>
-      </div>
-      <div class="quickstart">
-        <div class="qs-item">
-          <code id="curlExample">curl http://localhost:6446/v1/chat/completions -H "Authorization: Bearer YOUR_KEY" -H "Content-Type: application/json" -d '{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"Hello"}]}'</code>
-          <button class="btn-ico" onclick="copyText(document.getElementById('curlExample').textContent)" title="复制">📋</button>
-        </div>
-        <div class="qs-links">
-          <span class="qs-hint">Claude Code:</span>
-          <code>ANTHROPIC_BASE_URL=http://localhost:6446</code>
-          <span class="sep">·</span>
-          <span class="qs-hint">Cursor:</span>
-          <code>Base URL: http://localhost:6446/v1</code>
-        </div>
-      </div>
-    </section>
   </main>
 </div>
 
