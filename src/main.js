@@ -16,15 +16,14 @@ document.addEventListener('DOMContentLoaded', () => {
 // ── Toast ──────────────────────────────────────
 function showToast(msg) {
   let el = document.getElementById('toast');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'toast';
-    el.className = 'toast';
-    document.body.appendChild(el);
-  }
+  if (!el) return;
   el.textContent = msg;
-  el.classList.add('visible');
-  setTimeout(() => el.classList.remove('visible'), 2000);
+  el.classList.remove('opacity-0');
+  el.classList.add('opacity-100');
+  setTimeout(() => {
+    el.classList.remove('opacity-100');
+    el.classList.add('opacity-0');
+  }, 2000);
 }
 
 async function copyText(text) {
@@ -32,7 +31,6 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     showToast('✓ 已复制到剪贴板');
   } catch {
-    // Fallback
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
@@ -53,7 +51,7 @@ async function refreshStatus() {
   const statusText = document.getElementById('statusText');
 
   if (refreshBtn) refreshBtn.disabled = true;
-  statusDot.className = 'status-dot loading';
+  statusDot.className = 'status-dot';
   statusText.textContent = '加载中...';
 
   try {
@@ -82,18 +80,15 @@ function updateStatusUI(status) {
     text.textContent = '已停止';
   }
 
-  // Keys
   keyCount.textContent = status.keys.length;
   const keyList = document.getElementById('keyList');
   keyList.innerHTML = status.keys.map(k => `
-    <div class="key-item">
-      <div class="key-info">
-        <span class="key-name">${escapeHtml(k.name)}</span>
-        <span class="key-value">${escapeHtml(k.key)}</span>
+    <div class="flex items-center justify-between px-3 py-2.5 rounded-md bg-surface2 border border-border">
+      <div class="flex flex-col gap-0.5 min-w-0">
+        <span class="text-[11px] font-semibold text-muted uppercase tracking-wide">${escapeHtml(k.name)}</span>
+        <span class="text-sm text-white font-mono break-all">${escapeHtml(k.key)}</span>
       </div>
-      <div class="key-actions">
-        <button class="btn-ico" onclick="copyText('${escapeHtml(k.key)}')" title="复制 Key">📋</button>
-      </div>
+      <button onclick="copyText('${escapeHtml(k.key)}')" class="flex-shrink-0 text-base p-1 rounded hover:bg-white/10 transition-colors cursor-pointer" title="复制 Key">📋</button>
     </div>
   `).join('');
 }
@@ -107,9 +102,36 @@ async function loadModels() {
     return models;
   } catch (e) {
     document.getElementById('modelList').innerHTML =
-      `<div class="model-empty">加载失败: ${e}</div>`;
+      `<div class="text-center py-5 text-muted text-sm">加载失败: ${e}</div>`;
     return null;
   }
+}
+
+function renderModels(models) {
+  const container = document.getElementById('modelList');
+  if (!models.length) {
+    container.innerHTML = `<div class="text-center py-5 text-muted text-sm">暂无模型</div>`;
+    return;
+  }
+
+  container.innerHTML = models.map(m => `
+    <div class="flex items-center justify-between px-3 py-2.5 rounded-md bg-surface2 border border-border">
+      <div class="flex flex-col gap-0.5 min-w-0">
+        <div class="flex items-center gap-1.5">
+          <span class="text-sm font-medium text-white">${escapeHtml(m.id)}</span>
+          ${m.builtin
+            ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-[#6c8cff] text-white font-semibold leading-none">内置</span>`
+            : `<span class="text-[10px] px-1.5 py-0.5 rounded bg-[#fb923c] text-white font-semibold leading-none">自定义</span>`}
+        </div>
+        <div class="model-results flex items-center gap-3 text-xs text-muted" id="results-${escapeHtml(m.id)}">
+          <span>等待测速</span>
+        </div>
+      </div>
+      ${!m.builtin
+        ? `<button onclick="removeCustomModel('${escapeHtml(m.id)}')" class="flex-shrink-0 px-2 py-1 rounded text-xs text-red-400 bg-red-400/10 hover:bg-red-400/20 transition-all cursor-pointer">✕</button>`
+        : ''}
+    </div>
+  `).join('');
 }
 
 // ── Batch Speed Test ──────────────────────────
@@ -139,46 +161,12 @@ async function batchTestAll() {
   }
 }
 
-async function batchTestAllModels(models) {
-  for (const m of models) {
-    await testModel(m.id);
-  }
-}
-
-function renderModels(models) {
-  const container = document.getElementById('modelList');
-  if (!models.length) {
-    container.innerHTML = `<div class="model-empty">暂无模型</div>`;
-    return;
-  }
-
-  container.innerHTML = models.map(m => `
-    <div class="model-item" id="model-${escapeHtml(m.id)}">
-      <div class="model-left">
-        <div class="model-name">
-          ${escapeHtml(m.id)}
-          ${m.builtin
-            ? `<span class="tag">内置</span>`
-            : `<span class="tag custom">自定义</span>`}
-        </div>
-        <div class="model-results" id="results-${escapeHtml(m.id)}">
-          <span class="model-metric">等待测速</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:4px;">
-        ${!m.builtin ? `<button class="btn btn-danger" onclick="removeCustomModel('${escapeHtml(m.id)}')">✕</button>` : ''}
-      </div>
-    </div>
-  `).join('');
-}
-
-// ── Speed Test ─────────────────────────────────
 async function testModel(modelId) {
   if (testingModels.has(modelId)) return;
 
   testingModels.add(modelId);
   const results = document.getElementById('results-' + modelId);
-  if (results) results.innerHTML = `<span class="model-metric">⏳ 测试中...</span>`;
+  if (results) results.innerHTML = `<span class="text-xs text-muted">⏳ 测试中...</span>`;
 
   try {
     const result = await invoke('run_speed_test_cmd', { req: { model: modelId } });
@@ -186,7 +174,7 @@ async function testModel(modelId) {
   } catch (e) {
     const results = document.getElementById('results-' + modelId);
     if (results) {
-      results.innerHTML = `<span class="model-error">${escapeHtml(String(e))}</span>`;
+      results.innerHTML = `<span class="text-xs text-red-400">❌ ${escapeHtml(String(e))}</span>`;
     }
   } finally {
     testingModels.delete(modelId);
@@ -200,15 +188,15 @@ function displayTestResult(modelId, result) {
   if (result.success) {
     const tokensPerSec = result.tokens_per_sec.toFixed(1);
     const latency = result.latency_ms;
-    const preview = escapeHtml(result.response_preview);
+    const preview = escapeHtml(result.response_preview.substring(0, 30));
     results.innerHTML = `
-      <span class="model-metric">⏱ <strong>${latency}ms</strong> 延迟</span>
-      <span class="model-metric">⚡ <strong>${tokensPerSec}</strong> tok/s</span>
-      <span class="model-metric">📝 <strong>${result.total_tokens}</strong> tokens</span>
-      <span class="model-metric" title="${preview}">"${preview.substring(0, 30)}..."</span>
+      <span>⏱ <strong class="text-white">${latency}ms</strong></span>
+      <span>⚡ <strong class="text-white">${tokensPerSec}</strong> tok/s</span>
+      <span class="hidden sm:inline">📝 <strong class="text-white">${result.total_tokens}</strong> tokens</span>
+      <span class="hidden sm:inline" title="${preview}">"${preview}..."</span>
     `;
   } else {
-    results.innerHTML = `<span class="model-error">❌ ${escapeHtml(result.error || '测试失败')}</span>`;
+    results.innerHTML = `<span class="text-red-400">❌ ${escapeHtml(result.error || '测试失败')}</span>`;
   }
 }
 
