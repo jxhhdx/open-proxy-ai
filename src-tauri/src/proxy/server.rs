@@ -591,6 +591,10 @@ async fn chat_completions(
                 custom_routes.push((String::new(), String::new(), String::new()));
             }
         }
+        info!(
+            "ModelPool routing order: [{}]",
+            models.iter().map(|m| m.as_str()).collect::<Vec<&str>>().join(", ")
+        );
     } else if let Some(e) = pool.get_by_name(&model) {
         // Use only this specific model, no pool failover
         if e.enabled {
@@ -623,8 +627,12 @@ async fn chat_completions(
         };
 
         match result {
-            Ok(response) => return response,
+            Ok(response) => {
+                info!("Model pool success on {} (attempt {}/{})", m, i + 1, models.len());
+                return response;
+            }
             Err(e) => {
+                info!("Model pool entry {} (attempt {}/{}) failed: {}", m, i + 1, models.len(), e);
                 if m != models.last().unwrap() {
                     info!("Failover: {} -> next", m);
                     last_error = format!("{}: {}", m, e);
@@ -701,6 +709,10 @@ async fn messages_handler(
                 custom_routes.push((String::new(), String::new(), String::new()));
             }
         }
+        info!(
+            "ModelPool routing order: [{}]",
+            models.iter().map(|m| m.as_str()).collect::<Vec<&str>>().join(", ")
+        );
     } else if let Some(e) = pool.get_by_name(&model) {
         if e.enabled {
             models.push(e.model_name.clone());
@@ -753,8 +765,12 @@ async fn messages_handler(
         };
 
         match result {
-            Ok(response) => return response,
+            Ok(response) => {
+                info!("Model pool success on {} (attempt {}/{})", m, i + 1, models.len());
+                return response;
+            }
             Err(e) => {
+                info!("Model pool entry {} (attempt {}/{}) failed: {}", m, i + 1, models.len(), e);
                 if m != models.last().unwrap() {
                     info!("Failover: {} -> next", m);
                     last_error = format!("{}: {}", m, e);

@@ -32,7 +32,7 @@ function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest }: an
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
         {!isOpen && <button onClick={() => onEdit(entry)} style={{ ...btn, background: "transparent", color: C.muted, border: `1px solid ${C.border}`, fontSize: 11, padding: "5px 8px" }}>✎</button>}
-        <button onClick={() => onRemove(entry.id)} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontSize: 11, padding: "5px 8px" }}>✕</button>
+        {!isOpen && <button onClick={() => onRemove(entry.id)} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontSize: 11, padding: "5px 8px" }}>✕</button>}
       </div>
     </div>
   );
@@ -105,7 +105,7 @@ export default function ModelPool({ entries, results, setResults, onRefresh, sho
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={sorted.map((e: any) => e.id)} strategy={verticalListSortingStrategy}>
-            {sorted.map((e: any) => <Row key={e.id} entry={e} result={results[e.name]} onToggle={handleToggle} onRemove={handleRemove} onImport={handleImport} onTest={handleTest} />)}
+            {sorted.map((e: any) => <Row key={e.id} entry={e} result={results[e.name]} onToggle={handleToggle} onRemove={handleRemove} onEdit={onEdit} onImport={handleImport} onTest={handleTest} />)}
           </SortableContext>
         </DndContext>
       )}
