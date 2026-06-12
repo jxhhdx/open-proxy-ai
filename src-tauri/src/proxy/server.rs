@@ -89,6 +89,136 @@ async fn try_send_non_streaming(zen: &ZenClient, body: &str, session: &str) -> R
     }
 }
 
+async fn try_send_anthropic_streaming(
+    zen: &ZenClient,
+    body_str: &str,
+    session: &str,
+    model_name: &str,
+    input_tokens: u64,
+) -> Result<Response, String> {
+    match zen.send_streaming(body_str.to_string(), session).await {
+        Ok(upstream_resp) => {
+            let status = upstream_resp.status();
+            if status != 200 {
+                let text = upstream_resp.text().await.unwrap_or_default();
+                return Err(format!("{}: {}", status.as_u16(), text));
+            }
+
+            let msg_id = format!("msg_{:016x}", rand::random::<u64>());
+            let model = model_name.to_string();
+            let mut converter =
+                AnthropicStreamConverter::new(msg_id.clone(), model.clone(), input_tokens);
+
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(64);
+            let mut buffer = String::new();
+
+            // Send initial message_start
+            {
+                let start_event = serde_json::json!({
+                    "type": "message_start",
+                    "message": {
+                        "id": msg_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                        "model": model,
+                        "stop_reason": null,
+                        "usage": {
+                            "input_tokens": input_tokens,
+                            "output_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                            "cache_read_input_tokens": 0
+                        }
+                    }
+                });
+                let sse_line = format!(
+                    "event: message_start\ndata: {}\n\n",
+                    serde_json::to_string(&start_event).unwrap_or_default()
+                );
+                let _ = tx.send(Ok(Bytes::from(sse_line))).await;
+            }
+
+            let mut upstream_stream = upstream_resp.bytes_stream();
+
+            tokio::spawn(async move {
+                while let Some(chunk) = upstream_stream.next().await {
+                    let chunk = match chunk {
+                        Ok(b) => b,
+                        Err(_) => break,
+                    };
+                    let chunk_str = String::from_utf8_lossy(&chunk).to_string();
+                    buffer.push_str(&chunk_str);
+
+                    while let Some(nl) = buffer.find('\n') {
+                        let line = buffer[..nl].trim().to_string();
+                        buffer = buffer[nl + 1..].to_string();
+
+                        if !line.starts_with("data: ") {
+                            continue;
+                        }
+                        let payload = line[6..].trim().to_string();
+                        if payload == "[DONE]" {
+                            continue;
+                        }
+
+                        let parsed: serde_json::Value = match serde_json::from_str(&payload) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        let delta = parsed.pointer("/choices/0/delta");
+                        let finish_reason = parsed
+                            .pointer("/choices/0/finish_reason")
+                            .and_then(|f| f.as_str());
+
+                        if let Some(d) = delta {
+                            let anthropic_events = converter.process_delta(d, finish_reason);
+                            for (event_name, data_json) in anthropic_events {
+                                let sse_line = format!(
+                                    "event: {}\ndata: {}\n\n",
+                                    event_name, data_json
+                                );
+                                if tx.send(Ok(Bytes::from(sse_line))).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                drop(tx);
+            });
+
+            let stream = ReceiverStream::new(rx);
+
+            Ok(Response::builder()
+                .header("Content-Type", "text/event-stream")
+                .header("Cache-Control", "no-cache")
+                .header("Connection", "keep-alive")
+                .body(Body::from_stream(stream))
+                .unwrap_or_default())
+        }
+        Err(e) => Err(format!("Request error: {}", e)),
+    }
+}
+
+async fn try_send_anthropic_non_streaming(
+    zen: &ZenClient,
+    body_str: &str,
+    session: &str,
+    model_name: &str,
+    input_tokens: u64,
+) -> Result<Response, String> {
+    match zen.send_non_streaming(body_str.to_string(), session).await {
+        Ok((status, resp)) => {
+            if status != 200 || ZenClient::is_error(&resp) {
+                let msg = ZenClient::extract_error(&resp);
+                return Err(format!("{}: {}", status.as_u16(), msg));
+            }
+            Ok(Json(openai_to_anthropic(&resp, model_name, input_tokens)).into_response())
+        }
+        Err(e) => Err(format!("Request error: {}", e)),
+    }
+}
+
 fn get_all_models(custom_models: &[String]) -> Vec<String> {
     let mut all: Vec<String> = MODELS.iter().map(|m| m.to_string()).collect();
     for cm in custom_models {
@@ -118,10 +248,6 @@ fn auth_user(
         )
             .into_response()),
     }
-}
-
-fn check_model(model: &str, custom: &[String]) -> bool {
-    MODELS.contains(&model) || custom.contains(&model.to_string())
 }
 
 // ── GET /v1/models ────────────────────────────────────────────────────
@@ -254,12 +380,6 @@ async fn messages_handler(
         }
     };
 
-    let custom = state.custom_models.read().await;
-    if !check_model(&model, &custom) {
-        info!("Unknown model '{}' requested, letting pool route it", model);
-    }
-    drop(custom);
-
     let stream = body
         .get("stream")
         .and_then(|s| s.as_bool())
@@ -281,155 +401,68 @@ async fn messages_handler(
 
     let msgs_val = serde_json::json!(messages);
     let tools_val = tools.map(|t| serde_json::json!(t));
-    let (_, body_str) =
-        ZenClient::build_request_body(&model, &msgs_val, stream, tools_val.as_ref());
 
-    if stream {
-        match state.zen.send_streaming(body_str, &session_id).await {
-            Ok(upstream_resp) => {
-                let status = upstream_resp.status();
-                if status != 200 {
-                    let text = upstream_resp.text().await.unwrap_or_default();
-                    return (
-                        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-                        Json(serde_json::json!({
-                            "type": "error",
-                            "error": {"type": "upstream_error", "message": text}
-                        })),
-                    )
-                        .into_response();
-                }
-
-                let msg_id = format!("msg_{:016x}", rand::random::<u64>());
-                let mut converter =
-                    AnthropicStreamConverter::new(msg_id.clone(), model.clone(), input_tokens);
-
-                let (tx, rx) =
-                    tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(64);
-                let mut buffer = String::new();
-
-                // Send initial message_start
-                {
-                    let start_event = serde_json::json!({
-                        "type": "message_start",
-                        "message": {
-                            "id": msg_id,
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [],
-                            "model": model,
-                            "stop_reason": null,
-                            "usage": {
-                                "input_tokens": input_tokens,
-                                "output_tokens": 0,
-                                "cache_creation_input_tokens": 0,
-                                "cache_read_input_tokens": 0
-                            }
-                        }
-                    });
-                    let sse_line = format!(
-                        "event: message_start\ndata: {}\n\n",
-                        serde_json::to_string(&start_event).unwrap_or_default()
-                    );
-                    let _ = tx.send(Ok(Bytes::from(sse_line))).await;
-                }
-
-                let mut upstream_stream = upstream_resp.bytes_stream();
-
-                tokio::spawn(async move {
-                    while let Some(chunk) = upstream_stream.next().await {
-                        let chunk = match chunk {
-                            Ok(b) => b,
-                            Err(_) => break,
-                        };
-                        let chunk_str = String::from_utf8_lossy(&chunk).to_string();
-                        buffer.push_str(&chunk_str);
-
-                        // Process complete SSE lines
-                        while let Some(nl) = buffer.find('\n') {
-                            let line = buffer[..nl].trim().to_string();
-                            buffer = buffer[nl + 1..].to_string();
-
-                            if !line.starts_with("data: ") {
-                                continue;
-                            }
-                            let payload = line[6..].trim().to_string();
-                            if payload == "[DONE]" {
-                                continue;
-                            }
-
-                            let parsed: serde_json::Value = match serde_json::from_str(&payload) {
-                                Ok(v) => v,
-                                Err(_) => continue,
-                            };
-                            let delta = parsed
-                                .pointer("/choices/0/delta");
-                            let finish_reason = parsed
-                                .pointer("/choices/0/finish_reason")
-                                .and_then(|f| f.as_str());
-
-                            if let Some(d) = delta {
-                                let anthropic_events =
-                                    converter.process_delta(d, finish_reason);
-                                for (event_name, data_json) in anthropic_events {
-                                    let sse_line = format!(
-                                        "event: {}\ndata: {}\n\n",
-                                        event_name, data_json
-                                    );
-                                    if tx.send(Ok(Bytes::from(sse_line))).await.is_err() {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    drop(tx);
-                });
-
-                let stream = ReceiverStream::new(rx);
-
-                Response::builder()
-                    .header("Content-Type", "text/event-stream")
-                    .header("Cache-Control", "no-cache")
-                    .header("Connection", "keep-alive")
-                    .body(Body::from_stream(stream))
-                    .unwrap_or_default()
-            }
-            Err(e) => (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "type": "error",
-                    "error": {"type": "upstream_error", "message": format!("{}", e)}
-                })),
-            )
-                .into_response(),
+    // Resolve ModelPool into prioritized list with failover
+    let pool = state.model_pool.read().await;
+    let mut models: Vec<String> = Vec::new();
+    if model == "ModelPool" {
+        for e in pool.get_enabled() {
+            models.push(e.model_name.clone());
         }
-    } else {
-        match state.zen.send_non_streaming(body_str, &session_id).await {
-            Ok((status, resp)) => {
-                if status != 200 || ZenClient::is_error(&resp) {
-                    let msg = ZenClient::extract_error(&resp);
-                    return (
-                        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-                        Json(serde_json::json!({
-                            "type": "error",
-                            "error": {"type": "rate_limit_error", "message": format!("{} (free model rate limit)", msg)}
-                        })),
-                    )
-                        .into_response();
-                }
-                Json(openai_to_anthropic(&resp, &model, input_tokens)).into_response()
-            }
-            Err(e) => (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "type": "error",
-                    "error": {"type": "upstream_error", "message": format!("{}", e)}
-                })),
-            )
-                .into_response(),
+    } else if let Some(e) = pool.get_by_name(&model) {
+        if e.enabled {
+            models.push(e.model_name.clone());
         }
     }
+    if models.is_empty() {
+        models.push(model.clone());
+    }
+    drop(pool);
+
+    let mut last_error = String::from("All models failed");
+    for m in &models {
+        let (_, body_str) =
+            ZenClient::build_request_body(m, &msgs_val, stream, tools_val.as_ref());
+        let result = if stream {
+            try_send_anthropic_streaming(
+                &state.zen,
+                &body_str,
+                &session_id,
+                m,
+                input_tokens,
+            )
+            .await
+        } else {
+            try_send_anthropic_non_streaming(
+                &state.zen,
+                &body_str,
+                &session_id,
+                m,
+                input_tokens,
+            )
+            .await
+        };
+
+        match result {
+            Ok(response) => return response,
+            Err(e) => {
+                if m != models.last().unwrap() {
+                    info!("Failover: {} -> next", m);
+                    last_error = format!("{}: {}", m, e);
+                    continue;
+                }
+                last_error = format!("{}: {}", m, e);
+                break;
+            }
+        }
+    }
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": {"message": last_error, "type": "failover_error"}
+        })),
+    )
+        .into_response()
 }
 
 // ── GET /health ───────────────────────────────────────────────────────
