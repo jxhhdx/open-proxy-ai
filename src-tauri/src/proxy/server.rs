@@ -9,7 +9,7 @@ use axum::{
 use bytes::Bytes;
 use futures_util::StreamExt;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::cors::CorsLayer;
@@ -226,6 +226,14 @@ fn build_api_url(base_url: &str, path: &str) -> String {
     format!("{}{}", base, path)
 }
 
+/// Create a reqwest Client with a 120-second timeout for custom provider requests.
+fn custom_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 // ── Custom Provider Helpers ─────────────────────────────────────────────
 
 /// Send a request to a custom OpenAI-compatible provider.
@@ -235,7 +243,7 @@ async fn send_custom_openai(
     body_str: &str,
     stream: bool,
 ) -> Result<Response, String> {
-    let client = reqwest::Client::new();
+    let client = custom_http_client();
     let url = build_api_url(base_url, "/v1/chat/completions");
     let resp = client
         .post(&url)
@@ -285,7 +293,7 @@ async fn custom_anthropic_streaming(
     model_name: &str,
     input_tokens: u64,
 ) -> Result<Response, String> {
-    let client = reqwest::Client::new();
+    let client = custom_http_client();
     let url = build_api_url(base_url, "/v1/chat/completions");
     let resp = client
         .post(&url)
@@ -403,7 +411,7 @@ async fn custom_anthropic_non_streaming(
     model_name: &str,
     input_tokens: u64,
 ) -> Result<Response, String> {
-    let client = reqwest::Client::new();
+    let client = custom_http_client();
     let url = build_api_url(base_url, "/v1/chat/completions");
     let resp = client
         .post(&url)
@@ -439,7 +447,7 @@ async fn send_custom_anthropic_direct(
     body_str: &str,
     stream: bool,
 ) -> Result<Response, String> {
-    let client = reqwest::Client::new();
+    let client = custom_http_client();
     let url = build_api_url(base_url, "/v1/messages");
     let resp = client
         .post(&url)
@@ -815,7 +823,7 @@ pub async fn run_speed_test(
 
     if let Some((ref base_url, ref api_key, ref model_name, ref api_format)) = use_custom {
         // Custom provider: send to user's API endpoint
-        let client = reqwest::Client::new();
+        let client = custom_http_client();
         let is_anthropic = api_format == "anthropic";
         let url = if is_anthropic {
             build_api_url(base_url, "/v1/messages")
