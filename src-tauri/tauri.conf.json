@@ -1,7 +1,7 @@
 {
   "productName": "Open Proxy AI",
   "version": "0.0.1",
-  "identifier": "com.openproxyai.app",
+  "identifier": "com.openproxyai",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
