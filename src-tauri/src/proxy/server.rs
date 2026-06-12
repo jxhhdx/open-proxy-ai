@@ -170,19 +170,6 @@ async fn chat_completions(
         }
     };
 
-    let custom = state.custom_models.read().await;
-    if !check_model(&model, &custom) {
-        let all = get_all_models(&custom);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": {"message": format!("Unknown model: {}. Available: {}", model, all.join(", "))}
-            })),
-        )
-            .into_response();
-    }
-    drop(custom);
-
     let messages = body.get("messages").cloned().unwrap_or(serde_json::json!([]));
     let stream = body
         .get("stream")
@@ -270,15 +257,7 @@ async fn messages_handler(
 
     let custom = state.custom_models.read().await;
     if !check_model(&model, &custom) {
-        let all = get_all_models(&custom);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "type": "error",
-                "error": {"type": "invalid_request_error", "message": format!("Unknown model: {}. Available: {}", model, all.join(", "))}
-            })),
-        )
-            .into_response();
+        info!("Unknown model '{}' requested, letting pool route it", model);
     }
     drop(custom);
 
