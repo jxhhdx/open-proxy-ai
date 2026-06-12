@@ -515,9 +515,11 @@ pub async fn run_speed_test(
                 let elapsed = start.elapsed().as_millis() as u64;
                 if !r.status().is_success() {
                     let status = r.status().as_u16();
+                    let body_text = r.text().await.unwrap_or_default();
+                    let detail = if body_text.len() > 150 { format!("{}...", &body_text[..150]) } else { body_text };
                     return SpeedTestResult {
                         model: model.to_string(), success: false,
-                        error: Some(format!("HTTP {}", status)),
+                        error: Some(format!("HTTP {}: {}", status, detail)),
                         latency_ms: elapsed, tokens_per_sec: 0.0, total_tokens: 0,
                         response_preview: String::new(),
                     };
