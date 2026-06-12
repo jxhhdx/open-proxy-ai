@@ -186,16 +186,15 @@ async fn chat_completions(
     );
 
     let pool = state.model_pool.read().await;
-    let enabled = pool.get_enabled();
-    // Build ordered list: requested model first, then others by priority
     let mut models: Vec<String> = Vec::new();
-    if let Some(e) = pool.get_by_name(&model) {
-        if e.enabled { models.push(e.model_name.clone()); }
-    }
-    for e in &enabled {
-        if !models.contains(&e.model_name) {
+    if model == "ModelPool" {
+        // Route through entire pool by priority
+        for e in pool.get_enabled() {
             models.push(e.model_name.clone());
         }
+    } else if let Some(e) = pool.get_by_name(&model) {
+        // Use only this specific model, no pool failover
+        if e.enabled { models.push(e.model_name.clone()); }
     }
     if models.is_empty() { models.push(model.clone()); }
     drop(pool);

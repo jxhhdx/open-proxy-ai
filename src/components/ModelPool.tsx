@@ -69,8 +69,8 @@ export default function ModelPool({ entries, results, setResults, onRefresh, sho
     try { const status: any = await getStatus(); const key = status.keys[0]?.key; if (!key) { showToast(t.pool.noApiKey); return; } showToast(await importToTool({ model: name, model_name: name, api_key: key, tool })); } catch (err: any) { showToast("Error: " + err); }
   }, [showToast]);
   const handlePoolImport = useCallback(async (tool: string) => {
-    try { const status: any = await getStatus(); const key = status.keys[0]?.key; if (!key) { showToast(t.pool.noApiKey); return; } const sorted = entries.slice().sort((a: any, b: any) => a.priority - b.priority); const first = sorted.find((e: any) => e.enabled) || sorted[0]; if (!first) { showToast(t.pool.noModels); return; } showToast(await importToTool({ model: first.name, model_name: first.name, api_key: key, tool })); setShowPoolImp(false); } catch (err: any) { showToast("Error: " + err); }
-  }, [entries, showToast]);
+    try { const status: any = await getStatus(); const key = status.keys[0]?.key; if (!key) { showToast(t.pool.noApiKey); return; } showToast(await importToTool({ model: "ModelPool", model_name: "ModelPool", api_key: key, tool })); setShowPoolImp(false); } catch (err: any) { showToast("Error: " + err); }
+  }, [showToast]);
 
   const sorted = entries.slice().sort((a: any, b: any) => a.priority - b.priority);
   return (
