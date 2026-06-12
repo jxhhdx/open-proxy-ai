@@ -1,4 +1,4 @@
-# 🗂 功能清单 — OpenCode Free Proxy
+# 🗂 功能清单 — Open Proxy AI
 
 > Rust / Tauri 桌面端应用 · 双击即用，无需配环境
 
@@ -17,7 +17,7 @@
 
 ### 2. 🔑 API Key 管理
 - [x] **自动生成** — 首次运行自动创建 admin / user-default 两个 key
-- [x] **持久化存储** — 保存到 `~/.config/opencode-free-proxy/api-keys.json`
+- [x] **持久化存储** — 保存到 `~/.config/open-proxy-ai/api-keys.json`
 - [x] **双认证方式** — 支持 `Authorization: Bearer` 和 `x-api-key` 请求头
 - [x] **仪表盘展示** — 打开应用即可看到所有 key
 - [x] **一键复制** — 点击 Key 旁边的 📋 按钮复制到剪贴板
@@ -53,7 +53,7 @@
 - [x] **后台运行** — 关闭窗口不中断代理服务器
 
 ### 7. 🔐 安全与配置
-- [x] **自动建目录** — 配置文件保存在 `~/.config/opencode-free-proxy/`
+- [x] **自动建目录** — 配置文件保存在 `~/.config/open-proxy-ai/`
 - [x] **会话管理** — 每 30 分钟自动轮换 Zen API 会话 ID
 - [x] **错误处理** — 上游超时/限流/空响应均有友好提示
 
@@ -107,4 +107,4 @@
 
 ---
 
-> **提示：** 有新的功能需求？提 [Issue](https://github.com/jxhhdx/opencode-free-proxy/issues) 或直接告诉我。
+> **提示：** 有新的功能需求？提 [Issue](https://github.com/jxhhdx/open-proxy-ai/issues) 或直接告诉我。

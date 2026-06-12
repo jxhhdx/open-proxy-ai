@@ -1,7 +1,7 @@
 {
-  "productName": "OpenCode Free Proxy",
+  "productName": "Open Proxy AI",
   "version": "0.0.1",
-  "identifier": "com.opencode.free-proxy",
+  "identifier": "com.openproxyai.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "OpenCode Free Proxy",
+        "title": "Open Proxy AI",
         "width": 780,
         "height": 620,
         "minWidth": 600,

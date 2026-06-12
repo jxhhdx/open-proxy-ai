@@ -1,6 +1,6 @@
-# OpenCode Free Proxy
+# Open Proxy AI
 
-> **一款桌面应用**，将 [OpenCode](https://opencode.ai) 的免费 AI 模型暴露为标准 OpenAI 和 Anthropic API，内置模型号池、测速和自动切换功能。
+> **一款桌面应用**，将免费 AI 模型暴露为标准 OpenAI 和 Anthropic API，内置模型号池、测速和自动切换功能。
 
 [English Documentation](README.md)
 
@@ -19,13 +19,13 @@
 
 ### 下载
 
-从 [Releases](https://github.com/jxhhdx/opencode-free-proxy/releases) 页面下载最新的 `.dmg` 安装包。
+从 [Releases](https://github.com/jxhhdx/open-proxy-ai/releases) 页面下载最新的 `.dmg` 安装包。
 
 ### 从源码构建
 
 ```bash
-git clone https://github.com/jxhhdx/opencode-free-proxy.git
-cd opencode-free-proxy
+git clone https://github.com/jxhhdx/open-proxy-ai.git
+cd open-proxy-ai
 
 # 安装依赖
 npm install
@@ -55,11 +55,11 @@ cargo tauri build
 
 | 模型 | 类型 | 稳定性 |
 |-------|------|--------|
-| `deepseek-v4-flash-free` | OpenCode 免费 | ✅ 稳定 |
-| `big-pickle` | OpenCode 免费（别名） | ✅ 稳定 |
-| `minimax-m2.5-free` | OpenCode 免费 | ⚠️ 偶尔不可用 |
-| `nemotron-3-super-free` | OpenCode 免费 | ⚠️ 不太稳定 |
-| `qwen3.6-plus-free` | OpenCode 免费 | ❌ 已失效 |
+| `deepseek-v4-flash-free` | 免费 | ✅ 稳定 |
+| `big-pickle` | 免费（别名） | ✅ 稳定 |
+| `minimax-m2.5-free` | 免费 | ⚠️ 偶尔不可用 |
+| `nemotron-3-super-free` | 免费 | ⚠️ 不太稳定 |
+| `qwen3.6-plus-free` | 免费 | ❌ 已失效 |
 
 你也可以**添加自定义提供商**，填入自己的 API 地址和 Key。
 

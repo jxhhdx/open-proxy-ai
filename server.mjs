@@ -477,7 +477,7 @@ app.get("/v1/models", (_req, res) => {
   res.json({
     object: "list",
     data: MODELS.map((id) => ({
-      id, object: "model", created: 1779000000, owned_by: "opencode-free",
+      id, object: "model", created: 1779000000, owned_by: "free",
     })),
   });
 });
@@ -554,7 +554,7 @@ app.get("/health", (_req, res) => res.json({
 
 // ── Start ──────────────────────────────────────────────────────────
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`OpenCode Free Proxy v${PROXY_VERSION} on http://0.0.0.0:${PORT}`);
+  console.log(`Open Proxy AI v${PROXY_VERSION} on http://0.0.0.0:${PORT}`);
   console.log("  OpenAI:    POST /v1/chat/completions");
   console.log("  Anthropic: POST /v1/messages");
   console.log("  Models:    GET  /v1/models");

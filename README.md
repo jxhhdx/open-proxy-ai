@@ -1,6 +1,6 @@
-# OpenCode Free Proxy
+# Open Proxy AI
 
-> **A desktop app** that exposes free AI models from [OpenCode](https://opencode.ai) as standard OpenAI and Anthropic APIs, with a built-in model pool, speed testing, and automatic failover.
+> **A desktop app** that exposes free AI models as standard OpenAI and Anthropic APIs, with a built-in model pool, speed testing, and automatic failover.
 
 [中文文档](README.zh.md)
 
@@ -19,13 +19,13 @@
 
 ### Download
 
-Download the latest `.dmg` from [Releases](https://github.com/jxhhdx/opencode-free-proxy/releases).
+Download the latest `.dmg` from [Releases](https://github.com/jxhhdx/open-proxy-ai/releases).
 
 ### Build from source
 
 ```bash
-git clone https://github.com/jxhhdx/opencode-free-proxy.git
-cd opencode-free-proxy
+git clone https://github.com/jxhhdx/open-proxy-ai.git
+cd open-proxy-ai
 
 # Install dependencies
 npm install
@@ -55,11 +55,11 @@ Open the app → server starts automatically on `http://localhost:6446`.
 
 | Model | Type | Reliability |
 |-------|------|-------------|
-| `deepseek-v4-flash-free` | OpenCode Free | ✅ Solid |
-| `big-pickle` | OpenCode Free (alias) | ✅ Solid |
-| `minimax-m2.5-free` | OpenCode Free | ⚠️ Intermittent |
-| `nemotron-3-super-free` | OpenCode Free | ⚠️ Hit or miss |
-| `qwen3.6-plus-free` | OpenCode Free | ❌ Ended |
+| `deepseek-v4-flash-free` | Free | ✅ Solid |
+| `big-pickle` | Free (alias) | ✅ Solid |
+| `minimax-m2.5-free` | Free | ⚠️ Intermittent |
+| `nemotron-3-super-free` | Free | ⚠️ Hit or miss |
+| `qwen3.6-plus-free` | Free | ❌ Ended |
 
 You can also add **custom providers** with your own API URL and key.
 

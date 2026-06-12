@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    opencode_free_proxy_lib::run()
+    open_proxy_ai_lib::run()
 }

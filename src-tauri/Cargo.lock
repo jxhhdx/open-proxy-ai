@@ -2470,7 +2470,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "opencode-free-proxy"
+name = "open-proxy-ai"
 version = "0.0.1"
 dependencies = [
  "axum",

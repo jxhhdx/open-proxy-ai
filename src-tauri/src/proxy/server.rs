@@ -138,7 +138,7 @@ async fn list_models(
                 "id": id,
                 "object": "model",
                 "created": 1779000000,
-                "owned_by": "opencode-free"
+                "owned_by": "free"
             })
         })
         .collect();
@@ -569,7 +569,7 @@ pub async fn run_speed_test(
             Err(e) => SpeedTestResult { model: model.to_string(), success: false, error: Some(format!("Request failed: {}", e)), latency_ms: start.elapsed().as_millis() as u64, tokens_per_sec: 0.0, total_tokens: 0, response_preview: String::new() }
         }
     } else {
-        // OpenCode free model: use Zen API
+        // Free model from upstream: use Zen API
         let session_id = state.sessions.get_session("speedtest");
         let (_, body_str) = ZenClient::build_request_body(model, &test_messages, false, None);
 

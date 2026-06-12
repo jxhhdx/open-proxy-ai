@@ -196,7 +196,7 @@ async fn import_to_tool(
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
     let base_url = "http://localhost:6446";
     let base_url_v1 = "http://localhost:6446/v1";
-    let display_name = format!("OpenCode Free ({})", req.model);
+    let display_name = format!("Open Proxy AI ({})", req.model);
 
     match req.tool.as_str() {
         "claude" => {
@@ -237,7 +237,7 @@ async fn import_to_tool(
             let encoded_endpoint = urlencoding(base_url);
             let encoded_key = urlencoding(&req.api_key);
             let encoded_model = urlencoding(&api_model(&req));
-            let encoded_homepage = urlencoding("https://github.com/jxhhdx/opencode-free-proxy");
+            let encoded_homepage = urlencoding("https://github.com/jxhhdx/open-proxy-ai");
 
             let deep_link = format!(
                 "ccswitch://v1/import?resource=provider&app=claude&name={}&endpoint={}&apiKey={}&model={}&homepage={}",
@@ -510,7 +510,7 @@ pub fn run() {
         .setup(|app| {
             // Determine config directory
             let home = dirs_or_fallback();
-            let config_dir = home.join(".config/opencode-free-proxy");
+            let config_dir = home.join(".config/open-proxy-ai");
             let _ = std::fs::create_dir_all(&config_dir);
 
             let keys_path = config_dir.join("api-keys.json");

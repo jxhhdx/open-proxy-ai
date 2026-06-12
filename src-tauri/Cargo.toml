@@ -1,11 +1,11 @@
 [package]
-name = "opencode-free-proxy"
+name = "open-proxy-ai"
 version = "0.0.1"
 edition = "2021"
-description = "OpenCode Free AI Models Proxy - Desktop App"
+description = "Open Proxy AI - Desktop App for Free AI Models"
 
 [lib]
-name = "opencode_free_proxy_lib"
+name = "open_proxy_ai_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

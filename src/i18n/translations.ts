@@ -1,6 +1,6 @@
 export const en = {
   header: {
-    title: "OpenCode Free Proxy",
+    title: "Open Proxy AI",
     running: "Running on port",
     stopped: "Stopped",
     starting: "Starting...",
@@ -14,7 +14,7 @@ export const en = {
     importPool: "Import Pool",
     noModels: "No providers configured yet.",
     noModelsHint: "Click + Add to add one.",
-    opencode: "OpenCode",
+    opencode: "Free",
     custom: "Custom",
     notTested: "Not tested",
     test: "Test",
@@ -32,7 +32,7 @@ export const en = {
     addProvider: "Add Provider",
     name: "Name *",
     modelName: "Model name *",
-    apiUrl: "API URL (empty = use OpenCode free)",
+    apiUrl: "API URL (empty = free upstream)",
     apiKey: "API Key (optional)",
     openai: "OpenAI",
     anthropic: "Anthropic",
@@ -55,7 +55,7 @@ export type Translations = typeof en;
 
 export const zh: Translations = {
   header: {
-    title: "OpenCode Free Proxy",
+    title: "Open Proxy AI",
     running: "运行于端口",
     stopped: "已停止",
     starting: "正在启动...",
@@ -87,7 +87,7 @@ export const zh: Translations = {
     addProvider: "添加提供商",
     name: "名称 *",
     modelName: "模型名 *",
-    apiUrl: "API 地址（为空使用 OpenCode 免费）",
+    apiUrl: "API 地址（为空使用免费上游）",
     apiKey: "API Key（可选）",
     openai: "OpenAI",
     anthropic: "Anthropic",
