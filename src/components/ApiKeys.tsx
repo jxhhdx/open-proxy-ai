@@ -1,10 +1,12 @@
 import type { ApiKeyEntry } from "../types";
+import { useI18n } from "../i18n/context";
 
 export default function ApiKeys({ keys }: { keys: ApiKeyEntry[] }) {
+  const { t } = useI18n();
   return (
     <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <h2 style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>API Keys</h2>
+        <h2 style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>{t.keys.title}</h2>
         <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "var(--surface2)", color: "var(--muted)" }}>{keys.length}</span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
