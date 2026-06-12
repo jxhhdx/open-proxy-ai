@@ -36,7 +36,7 @@ jobs:
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: OpenCode-Free-Proxy-macOS.dmg
+          name: Open-Proxy-AI-macOS.dmg
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: warn
 
@@ -52,15 +52,15 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: OpenCode Free Proxy ${{ github.ref_name }}
-          files: OpenCode-Free-Proxy-macOS.dmg/*.dmg
+          name: Open Proxy AI ${{ github.ref_name }}
+          files: Open-Proxy-AI-macOS.dmg/*.dmg
           body: |
-            ## OpenCode Free Proxy ${{ github.ref_name }}
+            ## Open Proxy AI ${{ github.ref_name }}
 
             Download the latest macOS build below.
 
             ### How to use
-            1. Download the `.dmg` file
+            1. Download the \`.dmg\` file
             2. Open it and drag the app to Applications
             3. First time: System Settings → Privacy & Security → "Open anyway"
           draft: false
