@@ -16,7 +16,7 @@ export default function ApiKeys({ keys, showToast }: { keys: ApiKeyEntry[]; show
               <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>{k.name}</span>
               <span style={{ fontSize: 13, color: "var(--text)", fontFamily: '"SF Mono","Cascadia Code",monospace', wordBreak: "break-all" }}>{k.key}</span>
             </div>
-            <button onClick={() => copy(k.key, showToast)} style={{ fontSize: 13, padding: 4, borderRadius: 4, cursor: "pointer", background: "none", border: "none", color: "var(--muted)", display: "inline-flex", alignItems: "center" }}>
+            <button onClick={() => { copy(k.key); showToast(t.pool.copied); }} style={{ fontSize: 13, padding: 4, borderRadius: 4, cursor: "pointer", background: "none", border: "none", color: "var(--muted)", display: "inline-flex", alignItems: "center" }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
           </div>
@@ -26,6 +26,6 @@ export default function ApiKeys({ keys, showToast }: { keys: ApiKeyEntry[]; show
   );
 }
 
-async function copy(t: string, showToast: (msg: string) => void) {
-  try { await navigator.clipboard.writeText(t); showToast("Copied"); } catch { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+async function copy(t: string) {
+  try { await navigator.clipboard.writeText(t); } catch { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
 }
