@@ -8,7 +8,7 @@ import { useI18n } from "../i18n/context";
 const C = { accent: "#6c8cff", surface: "var(--surface)", surface2: "var(--surface2)", border: "var(--border)", text: "var(--text)", muted: "var(--muted)", red: "#f87171", orange: "#fb923c" };
 const btn: React.CSSProperties = { padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none" };
 
-function Row({ entry, result, onToggle, onRemove, onImport, onTest }: any) {
+function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest }: any) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
   const isOpen = entry.provider_type === "opencode";
@@ -31,13 +31,14 @@ function Row({ entry, result, onToggle, onRemove, onImport, onTest }: any) {
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-        {!isOpen && <button onClick={() => onRemove(entry.id)} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontSize: 11, padding: "5px 8px" }}>✕</button>}
+        {!isOpen && <button onClick={() => onEdit(entry)} style={{ ...btn, background: "transparent", color: C.muted, border: `1px solid ${C.border}`, fontSize: 11, padding: "5px 8px" }}>✎</button>}
+        <button onClick={() => onRemove(entry.id)} style={{ ...btn, background: "transparent", color: C.red, border: `1px solid ${C.border}`, fontSize: 11, padding: "5px 8px" }}>✕</button>
       </div>
     </div>
   );
 }
 
-export default function ModelPool({ entries, results, setResults, onRefresh, showToast, onAddClick }: any) {
+export default function ModelPool({ entries, results, setResults, onRefresh, showToast, onAddClick, onEdit }: any) {
   const { t } = useI18n();
   const [testing, setTesting] = useState(false);
   const [showPoolImp, setShowPoolImp] = useState(false);
@@ -58,9 +59,11 @@ export default function ModelPool({ entries, results, setResults, onRefresh, sho
 
   const handleBatchTest = useCallback(async () => {
     setTesting(true); setResults({});
-    for (const e of entries.slice().sort((a: any, b: any) => a.priority - b.priority)) {
-      try { const r = await runSpeedTest(e.name); setResults((p: any) => ({ ...p, [e.name]: r })); } catch {}
-    }
+    const sorted = entries.slice().sort((a: any, b: any) => a.priority - b.priority);
+    // Fire all speed tests concurrently, update results as each finishes
+    await Promise.allSettled(sorted.map((e: any) =>
+      runSpeedTest(e.name).then(r => setResults((p: any) => ({ ...p, [e.name]: r })))
+    ));
     setTesting(false); showToast(t.pool.testComplete);
   }, [entries, setResults, showToast]);
 

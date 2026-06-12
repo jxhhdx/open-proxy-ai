@@ -125,12 +125,14 @@ async fn remove_pool_entry(
     id: String,
 ) -> Result<PoolStatus, String> {
     let mut pool = state.proxy.model_pool.write().await;
-    let name = pool.entries.iter().find(|e| e.id == id).map(|e| e.name.clone()).unwrap_or_default();
-    pool.remove(&id);
-    if let Some(ref config_dir) = state.config_dir {
-        pool.save(&config_dir.join("model_pool.json"));
+    let removed = pool.remove(&id);
+    let name = removed.as_ref().map(|e| e.name.as_str()).unwrap_or("?");
+    if removed.is_some() {
+        if let Some(ref config_dir) = state.config_dir {
+            pool.save(&config_dir.join("model_pool.json"));
+        }
+        state.proxy.log.info(format!("Removed provider: {}", name));
     }
-    state.proxy.log.info(format!("Removed provider: {}", name));
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),

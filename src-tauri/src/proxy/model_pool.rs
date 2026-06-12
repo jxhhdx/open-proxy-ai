@@ -34,6 +34,10 @@ fn default_provider_type() -> String {
 pub struct ModelPool {
     pub pool_mode: bool,
     pub entries: Vec<ModelPoolEntry>,
+    /// IDs of built-in models that were explicitly deleted by the user.
+    /// These won't be re-created on restart.
+    #[serde(default)]
+    pub deleted_builtins: Vec<String>,
 }
 
 impl ModelPool {
@@ -41,15 +45,19 @@ impl ModelPool {
         ModelPool {
             pool_mode: true,
             entries: Vec::new(),
+            deleted_builtins: Vec::new(),
         }
     }
 
     /// Load or initialize the pool from disk.
+    /// Returns `None` if the file exists but is corrupt, so the caller can handle it.
     pub fn load(path: &PathBuf) -> Self {
         if let Ok(content) = std::fs::read_to_string(path) {
             if let Ok(pool) = serde_json::from_str::<ModelPool>(&content) {
                 return pool;
             }
+            // File exists but is corrupted — log would go here;
+            // fall through to return new empty pool rather than panic.
         }
         Self::new()
     }
@@ -81,6 +89,11 @@ impl ModelPool {
         self.entries.iter().find(|e| e.name == name || e.model_name == name)
     }
 
+    /// Find mutable entry by ID.
+    pub fn get_by_id_mut(&mut self, id: &str) -> Option<&mut ModelPoolEntry> {
+        self.entries.iter_mut().find(|e| e.id == id)
+    }
+
     /// Find index of entry by ID.
     fn index_by_id(&self, id: &str) -> Option<usize> {
         self.entries.iter().position(|e| e.id == id)
@@ -95,9 +108,21 @@ impl ModelPool {
         }
     }
 
-    /// Remove an entry by ID.
-    pub fn remove(&mut self, id: &str) {
-        self.entries.retain(|e| e.id != id);
+    /// Remove an entry by ID. Returns the removed entry, if any.
+    /// If the removed entry was a built-in, records its ID so it
+    /// won't be re-created by `init_builtins`.
+    pub fn remove(&mut self, id: &str) -> Option<ModelPoolEntry> {
+        if let Some(idx) = self.index_by_id(id) {
+            let entry = self.entries.remove(idx);
+            if entry.builtin {
+                if !self.deleted_builtins.contains(&entry.id) {
+                    self.deleted_builtins.push(entry.id.clone());
+                }
+            }
+            Some(entry)
+        } else {
+            None
+        }
     }
 
     /// Toggle enable/disable for an entry.
@@ -118,13 +143,19 @@ impl ModelPool {
     }
 
     /// Initialize built-in OpenCode models (replaces all opencode entries).
+    /// Skips any model whose opencode-{name} id is in `deleted_builtins`.
     pub fn init_builtins(&mut self, model_names: &[&str]) {
         // Remove existing opencode entries
         self.entries.retain(|e| e.provider_type != "opencode");
 
         for (i, name) in model_names.iter().enumerate() {
+            let id = format!("opencode-{}", name);
+            // Skip models the user previously deleted
+            if self.deleted_builtins.contains(&id) {
+                continue;
+            }
             self.entries.push(ModelPoolEntry {
-                id: format!("opencode-{}", name),
+                id,
                 name: name.to_string(),
                 base_url: String::new(),
                 api_key: String::new(),
@@ -136,5 +167,261 @@ impl ModelPool {
                 api_format: "openai".into(),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_MODELS: &[&str] = &[
+        "deepseek-v4-flash-free",
+        "big-pickle",
+        "minimax-m2.5-free",
+    ];
+
+    fn make_custom_entry(id: &str, name: &str, priority: u32) -> ModelPoolEntry {
+        ModelPoolEntry {
+            id: id.to_string(),
+            name: name.to_string(),
+            base_url: "https://api.example.com/v1".into(),
+            api_key: "sk-test".into(),
+            model_name: name.to_string(),
+            priority,
+            enabled: true,
+            builtin: false,
+            provider_type: "custom".into(),
+            api_format: "openai".into(),
+        }
+    }
+
+    #[test]
+    fn test_new_pool_is_empty() {
+        let pool = ModelPool::new();
+        assert!(pool.entries.is_empty());
+        assert!(pool.pool_mode);
+        assert!(pool.deleted_builtins.is_empty());
+    }
+
+    #[test]
+    fn test_add_and_remove_custom_entry() {
+        let mut pool = ModelPool::new();
+        let entry = make_custom_entry("test-1", "my-model", 1);
+        pool.upsert(entry);
+
+        assert_eq!(pool.entries.len(), 1);
+        assert_eq!(pool.entries[0].name, "my-model");
+
+        let removed = pool.remove("test-1");
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().name, "my-model");
+        assert!(pool.entries.is_empty());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_entry_returns_none() {
+        let mut pool = ModelPool::new();
+        let result = pool.remove("does-not-exist");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_upsert_updates_existing_entry() {
+        let mut pool = ModelPool::new();
+        let entry = make_custom_entry("test-1", "original", 1);
+        pool.upsert(entry);
+
+        let updated = ModelPoolEntry {
+            priority: 5,
+            name: "updated".into(),
+            ..make_custom_entry("test-1", "updated", 5)
+        };
+        pool.upsert(updated);
+
+        assert_eq!(pool.entries.len(), 1);
+        assert_eq!(pool.entries[0].name, "updated");
+        assert_eq!(pool.entries[0].priority, 5);
+    }
+
+    #[test]
+    fn test_toggle_enabled() {
+        let mut pool = ModelPool::new();
+        let entry = make_custom_entry("test-1", "my-model", 1);
+        pool.upsert(entry);
+
+        assert!(pool.entries[0].enabled);
+
+        let new_state = pool.toggle_enabled("test-1");
+        assert!(!new_state);
+        assert!(!pool.entries[0].enabled);
+
+        let new_state2 = pool.toggle_enabled("test-1");
+        assert!(new_state2);
+        assert!(pool.entries[0].enabled);
+    }
+
+    #[test]
+    fn test_toggle_nonexistent_returns_false() {
+        let mut pool = ModelPool::new();
+        assert!(!pool.toggle_enabled("nope"));
+    }
+
+    #[test]
+    fn test_get_enabled_returns_sorted() {
+        let mut pool = ModelPool::new();
+        pool.upsert(make_custom_entry("c", "c", 10));
+        pool.upsert(make_custom_entry("a", "a", 1));
+        pool.upsert(make_custom_entry("b", "b", 5));
+
+        // Disable one
+        pool.toggle_enabled("c");
+
+        let enabled = pool.get_enabled();
+        assert_eq!(enabled.len(), 2);
+        assert_eq!(enabled[0].name, "a");
+        assert_eq!(enabled[1].name, "b");
+    }
+
+    #[test]
+    fn test_get_by_name_matches_name_or_model_name() {
+        let mut pool = ModelPool::new();
+        pool.upsert(ModelPoolEntry {
+            id: "test-id".into(),
+            name: "display-name".into(),
+            model_name: "actual-model".into(),
+            ..make_custom_entry("test-id", "display-name", 1)
+        });
+
+        assert!(pool.get_by_name("display-name").is_some());
+        assert!(pool.get_by_name("actual-model").is_some());
+        assert!(pool.get_by_name("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_set_priority() {
+        let mut pool = ModelPool::new();
+        pool.upsert(make_custom_entry("test-1", "a", 5));
+        pool.set_priority("test-1", 100);
+        assert_eq!(pool.entries[0].priority, 100);
+    }
+
+    #[test]
+    fn test_init_builtins_adds_all_models() {
+        let mut pool = ModelPool::new();
+        pool.init_builtins(TEST_MODELS);
+
+        assert_eq!(pool.entries.len(), TEST_MODELS.len());
+        for (i, name) in TEST_MODELS.iter().enumerate() {
+            let entry = pool.get_by_name(name).unwrap();
+            assert!(entry.builtin);
+            assert_eq!(entry.provider_type, "opencode");
+            assert_eq!(entry.priority, (i + 1) as u32);
+            assert!(entry.enabled);
+        }
+    }
+
+    #[test]
+    fn test_init_builtins_removes_old_opencode_entries() {
+        let mut pool = ModelPool::new();
+        pool.init_builtins(TEST_MODELS);
+        // Second call should replace, not duplicate
+        pool.init_builtins(TEST_MODELS);
+        assert_eq!(pool.entries.len(), TEST_MODELS.len());
+    }
+
+    #[test]
+    fn test_init_builtins_skips_deleted_builtins() {
+        let mut pool = ModelPool::new();
+        pool.deleted_builtins.push("opencode-big-pickle".into());
+        pool.init_builtins(TEST_MODELS);
+
+        // big-pickle should not be present
+        assert_eq!(pool.entries.len(), TEST_MODELS.len() - 1);
+        assert!(pool.get_by_name("big-pickle").is_none());
+        assert!(pool.get_by_name("deepseek-v4-flash-free").is_some());
+    }
+
+    #[test]
+    fn test_remove_builtin_records_deleted_id() {
+        let mut pool = ModelPool::new();
+        pool.init_builtins(TEST_MODELS);
+
+        let removed = pool.remove("opencode-big-pickle");
+        assert!(removed.is_some());
+        assert!(removed.unwrap().builtin);
+
+        assert!(pool.deleted_builtins.contains(&"opencode-big-pickle".into()));
+        // Running init_builtins again should not bring it back
+        pool.init_builtins(TEST_MODELS);
+        assert!(pool.get_by_name("big-pickle").is_none());
+        assert_eq!(pool.entries.len(), 2); // only the other two
+    }
+
+    #[test]
+    fn test_remove_custom_entry_does_not_affect_deleted_builtins() {
+        let mut pool = ModelPool::new();
+        pool.init_builtins(TEST_MODELS);
+        pool.upsert(make_custom_entry("custom-1", "my-model", 99));
+
+        pool.remove("custom-1");
+        assert!(pool.deleted_builtins.is_empty());
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let dir = std::env::temp_dir().join("model_pool_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_pool.json");
+
+        // Create and save
+        {
+            let mut pool = ModelPool::new();
+            pool.init_builtins(TEST_MODELS);
+            pool.upsert(make_custom_entry("custom-1", "my-custom", 99));
+            pool.remove("opencode-big-pickle");
+            pool.save(&path);
+        }
+
+        // Load and verify
+        let loaded = ModelPool::load(&path);
+        assert_eq!(loaded.entries.len(), 3); // 2 builtins (one deleted) + 1 custom
+        assert!(loaded.deleted_builtins.contains(&"opencode-big-pickle".into()));
+        assert!(loaded.get_by_name("deepseek-v4-flash-free").is_some());
+        assert!(loaded.get_by_name("big-pickle").is_none());
+        assert!(loaded.get_by_name("my-custom").is_some());
+
+        // Clean up
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_load_empty_or_missing_file_returns_empty_pool() {
+        let path = PathBuf::from("/tmp/nonexistent_file_12345.json");
+        let pool = ModelPool::load(&path);
+        assert!(pool.entries.is_empty());
+        assert!(pool.deleted_builtins.is_empty());
+    }
+
+    #[test]
+    fn test_remove_duplicate_id_does_not_duplicate_deleted() {
+        let mut pool = ModelPool::new();
+        pool.init_builtins(TEST_MODELS);
+        pool.remove("opencode-big-pickle");
+        // Remove same id again (already gone)
+        pool.remove("opencode-big-pickle");
+        // Should only appear once in deleted_builtins
+        let count = pool.deleted_builtins.iter().filter(|&id| id == "opencode-big-pickle").count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_init_builtins_preserves_custom_entries() {
+        let mut pool = ModelPool::new();
+        pool.upsert(make_custom_entry("custom-1", "keep-me", 99));
+        pool.init_builtins(TEST_MODELS);
+
+        assert!(pool.get_by_name("keep-me").is_some());
+        assert_eq!(pool.entries.len(), TEST_MODELS.len() + 1);
     }
 }

@@ -23,6 +23,7 @@ export const en = {
     testing: "Testing...",
     testComplete: "Test complete",
     added: "Added",
+    edited: "Saved",
     removed: "Removed",
     orderSaved: "Order saved",
     noApiKey: "No API key",
@@ -30,6 +31,7 @@ export const en = {
   import: { claude: "Claude Code", codex: "Codex", ccswitch: "CCSwitch", modelPool: "ModelPool" },
   dialog: {
     addProvider: "Add Provider",
+    editProvider: "Edit Provider",
     name: "Name *",
     modelName: "Model name *",
     apiUrl: "API URL (empty = free upstream)",
@@ -38,6 +40,7 @@ export const en = {
     anthropic: "Anthropic",
     cancel: "Cancel",
     add: "Add",
+    save: "Save",
   },
   settings: {
     title: "Settings",
@@ -78,6 +81,7 @@ export const zh: Translations = {
     testing: "测试中...",
     testComplete: "测速完成",
     added: "已添加",
+    edited: "已保存",
     removed: "已移除",
     orderSaved: "排序已保存",
     noApiKey: "没有可用的 API Key",
@@ -85,6 +89,7 @@ export const zh: Translations = {
   import: { claude: "Claude Code", codex: "Codex", ccswitch: "CCSwitch", modelPool: "ModelPool" },
   dialog: {
     addProvider: "添加提供商",
+    editProvider: "编辑提供商",
     name: "名称 *",
     modelName: "模型名 *",
     apiUrl: "API 地址（为空使用免费上游）",
@@ -93,6 +98,7 @@ export const zh: Translations = {
     anthropic: "Anthropic",
     cancel: "取消",
     add: "添加",
+    save: "保存",
   },
   settings: {
     title: "设置",

@@ -16,6 +16,7 @@ function AppInner() {
   const [results, setResults] = useState<Record<string, any>>({});
   const [toast, setToast] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [editingEntry, setEditingEntry] = useState<ModelPoolEntry | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -41,8 +42,8 @@ function AppInner() {
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 24px" }}>
       <Header status={status} loading={loading} onRefresh={refresh} onSettings={() => setShowSettings(true)} />
       <ApiKeys keys={status?.keys || []} showToast={showToast} />
-      <ModelPool entries={pool} results={results} setResults={setResults} onRefresh={refresh} showToast={showToast} onAddClick={() => setShowAdd(true)} />
-      {showAdd && <AddProviderDialog onClose={() => setShowAdd(false)} onAdded={() => { setShowAdd(false); refresh(); }} showToast={showToast} />}
+      <ModelPool entries={pool} results={results} setResults={setResults} onRefresh={refresh} showToast={showToast} onAddClick={() => setShowAdd(true)} onEdit={(e: ModelPoolEntry) => setEditingEntry(e)} />
+      {(showAdd || editingEntry) && <AddProviderDialog entry={editingEntry} onClose={() => { setShowAdd(false); setEditingEntry(null); }} onAdded={() => { setShowAdd(false); setEditingEntry(null); refresh(); }} showToast={showToast} />}
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
       <Toast message={toast} />
     </div>
