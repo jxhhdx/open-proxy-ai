@@ -21,3 +21,7 @@ node_modules_old
 node_modules_tmp
 nm_old
 node_modules
+
+# ── Secrets ────────────────────────────────────────
+test_nvidia.py
+test_*.py

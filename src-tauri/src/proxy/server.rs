@@ -219,6 +219,265 @@ async fn try_send_anthropic_non_streaming(
     }
 }
 
+/// Strip trailing `/v1` from base_url to avoid double `/v1` when appending API paths.
+fn build_api_url(base_url: &str, path: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let base = base.strip_suffix("/v1").unwrap_or(base);
+    format!("{}{}", base, path)
+}
+
+// ── Custom Provider Helpers ─────────────────────────────────────────────
+
+/// Send a request to a custom OpenAI-compatible provider.
+async fn send_custom_openai(
+    base_url: &str,
+    api_key: &str,
+    body_str: &str,
+    stream: bool,
+) -> Result<Response, String> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(base_url, "/v1/chat/completions");
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .body(body_str.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("Request error: {}", e))?;
+
+    let status = resp.status();
+    if status != 200 {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status.as_u16(), text));
+    }
+
+    if !stream {
+        let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+        return Ok(Json(body).into_response());
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(64);
+    let mut s = resp.bytes_stream();
+    tokio::spawn(async move {
+        while let Some(chunk) = s.next().await {
+            if let Ok(b) = chunk {
+                if tx.send(b).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let stream = ReceiverStream::new(rx).map(|b| Ok::<_, std::convert::Infallible>(b));
+    Ok(Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap_or_default())
+}
+
+/// Send to custom OpenAI provider and convert response to Anthropic format (streaming).
+async fn custom_anthropic_streaming(
+    base_url: &str,
+    api_key: &str,
+    body_str: &str,
+    model_name: &str,
+    input_tokens: u64,
+) -> Result<Response, String> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(base_url, "/v1/chat/completions");
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .body(body_str.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("Request error: {}", e))?;
+
+    let status = resp.status();
+    if status != 200 {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status.as_u16(), text));
+    }
+
+    let msg_id = format!("msg_{:016x}", rand::random::<u64>());
+    let model = model_name.to_string();
+    let mut converter =
+        AnthropicStreamConverter::new(msg_id.clone(), model.clone(), input_tokens);
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(64);
+    let mut buffer = String::new();
+
+    // Send initial message_start
+    {
+        let start_event = serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": msg_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": model,
+                "stop_reason": null,
+                "usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0
+                }
+            }
+        });
+        let sse_line = format!(
+            "event: message_start\ndata: {}\n\n",
+            serde_json::to_string(&start_event).unwrap_or_default()
+        );
+        let _ = tx.send(Ok(Bytes::from(sse_line))).await;
+    }
+
+    let mut upstream_stream = resp.bytes_stream();
+
+    tokio::spawn(async move {
+        while let Some(chunk) = upstream_stream.next().await {
+            let chunk = match chunk {
+                Ok(b) => b,
+                Err(_) => break,
+            };
+            let chunk_str = String::from_utf8_lossy(&chunk).to_string();
+            buffer.push_str(&chunk_str);
+
+            while let Some(nl) = buffer.find('\n') {
+                let line = buffer[..nl].trim().to_string();
+                buffer = buffer[nl + 1..].to_string();
+
+                if !line.starts_with("data: ") {
+                    continue;
+                }
+                let payload = line[6..].trim().to_string();
+                if payload == "[DONE]" {
+                    continue;
+                }
+
+                let parsed: serde_json::Value = match serde_json::from_str(&payload) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let delta = parsed.pointer("/choices/0/delta");
+                let finish_reason = parsed
+                    .pointer("/choices/0/finish_reason")
+                    .and_then(|f| f.as_str());
+
+                if let Some(d) = delta {
+                    let anthropic_events = converter.process_delta(d, finish_reason);
+                    for (event_name, data_json) in anthropic_events {
+                        let sse_line = format!(
+                            "event: {}\ndata: {}\n\n",
+                            event_name, data_json
+                        );
+                        if tx.send(Ok(Bytes::from(sse_line))).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        drop(tx);
+    });
+
+    let stream = ReceiverStream::new(rx);
+
+    Ok(Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap_or_default())
+}
+
+/// Send to custom OpenAI provider and convert response to Anthropic format (non-streaming).
+async fn custom_anthropic_non_streaming(
+    base_url: &str,
+    api_key: &str,
+    body_str: &str,
+    model_name: &str,
+    input_tokens: u64,
+) -> Result<Response, String> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(base_url, "/v1/chat/completions");
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .body(body_str.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("Request error: {}", e))?;
+
+    let status = resp.status();
+    if status != 200 {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status.as_u16(), text));
+    }
+
+    let json: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+    if json.get("error").is_some() {
+        let msg = json
+            .pointer("/error/message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Unknown error");
+        return Err(format!("{}: {}", status.as_u16(), msg));
+    }
+
+    Ok(Json(openai_to_anthropic(&json, model_name, input_tokens)).into_response())
+}
+
+/// Send directly to a custom Anthropic-compatible provider.
+async fn send_custom_anthropic_direct(
+    base_url: &str,
+    api_key: &str,
+    body_str: &str,
+    stream: bool,
+) -> Result<Response, String> {
+    let client = reqwest::Client::new();
+    let url = build_api_url(base_url, "/v1/messages");
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .body(body_str.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("Request error: {}", e))?;
+
+    let status = resp.status();
+    if status != 200 {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status.as_u16(), text));
+    }
+
+    if !stream {
+        let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+        return Ok(Json(body).into_response());
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(64);
+    let mut s = resp.bytes_stream();
+    tokio::spawn(async move {
+        while let Some(chunk) = s.next().await {
+            if let Ok(b) = chunk { if tx.send(b).await.is_err() { break; } }
+        }
+    });
+    let stream = ReceiverStream::new(rx).map(|b| Ok::<_, std::convert::Infallible>(b));
+    Ok(Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap_or_default())
+}
+
 fn get_all_models(custom_models: &[String]) -> Vec<String> {
     let mut all: Vec<String> = MODELS.iter().map(|m| m.to_string()).collect();
     for cm in custom_models {
@@ -313,24 +572,43 @@ async fn chat_completions(
 
     let pool = state.model_pool.read().await;
     let mut models: Vec<String> = Vec::new();
+    let mut custom_routes: Vec<(String, String, String)> = Vec::new(); // (base_url, api_key, api_format) per model
     if model == "ModelPool" {
         // Route through entire pool by priority
         for e in pool.get_enabled() {
             models.push(e.model_name.clone());
+            if !e.base_url.is_empty() {
+                custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
+            } else {
+                custom_routes.push((String::new(), String::new(), String::new()));
+            }
         }
     } else if let Some(e) = pool.get_by_name(&model) {
         // Use only this specific model, no pool failover
-        if e.enabled { models.push(e.model_name.clone()); }
+        if e.enabled {
+            models.push(e.model_name.clone());
+            if !e.base_url.is_empty() {
+                custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
+            } else {
+                custom_routes.push((String::new(), String::new(), String::new()));
+            }
+        }
     }
-    if models.is_empty() { models.push(model.clone()); }
+    if models.is_empty() {
+        models.push(model.clone());
+        custom_routes.push((String::new(), String::new(), String::new()));
+    }
     drop(pool);
 
     let mut last_error = String::from("All models failed");
-    for m in &models {
+    for (i, m) in models.iter().enumerate() {
         // Skip if different from requested and requested is still in list (tried first)
         // Build request for this model
         let (_, body_str) = ZenClient::build_request_body(m, &messages, stream, tools);
-        let result = if stream {
+        let (ref base_url, ref api_key, ref _api_format) = custom_routes[i];
+        let result = if !base_url.is_empty() {
+            send_custom_openai(base_url, api_key, &body_str, stream).await
+        } else if stream {
             try_send_streaming(&state.zen, &body_str, &session_id).await
         } else {
             try_send_non_streaming(&state.zen, &body_str, &session_id).await
@@ -405,25 +683,48 @@ async fn messages_handler(
     // Resolve ModelPool into prioritized list with failover
     let pool = state.model_pool.read().await;
     let mut models: Vec<String> = Vec::new();
+    let mut custom_routes: Vec<(String, String, String)> = Vec::new(); // (base_url, api_key, api_format) per model
     if model == "ModelPool" {
         for e in pool.get_enabled() {
             models.push(e.model_name.clone());
+            if !e.base_url.is_empty() {
+                custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
+            } else {
+                custom_routes.push((String::new(), String::new(), String::new()));
+            }
         }
     } else if let Some(e) = pool.get_by_name(&model) {
         if e.enabled {
             models.push(e.model_name.clone());
+            if !e.base_url.is_empty() {
+                custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
+            } else {
+                custom_routes.push((String::new(), String::new(), String::new()));
+            }
         }
     }
     if models.is_empty() {
         models.push(model.clone());
+        custom_routes.push((String::new(), String::new(), String::new()));
     }
     drop(pool);
 
     let mut last_error = String::from("All models failed");
-    for m in &models {
+    for (i, m) in models.iter().enumerate() {
         let (_, body_str) =
             ZenClient::build_request_body(m, &msgs_val, stream, tools_val.as_ref());
-        let result = if stream {
+        let (ref base_url, ref api_key, ref api_format) = custom_routes[i];
+        let result = if !base_url.is_empty() {
+            if api_format == "anthropic" {
+                // Send original Anthropic body directly
+                let original_body_str = serde_json::to_string(&body).unwrap_or_default();
+                send_custom_anthropic_direct(base_url, api_key, &original_body_str, stream).await
+            } else if stream {
+                custom_anthropic_streaming(base_url, api_key, &body_str, m, input_tokens).await
+            } else {
+                custom_anthropic_non_streaming(base_url, api_key, &body_str, m, input_tokens).await
+            }
+        } else if stream {
             try_send_anthropic_streaming(
                 &state.zen,
                 &body_str,
@@ -517,9 +818,9 @@ pub async fn run_speed_test(
         let client = reqwest::Client::new();
         let is_anthropic = api_format == "anthropic";
         let url = if is_anthropic {
-            format!("{}/v1/messages", base_url.trim_end_matches('/'))
+            build_api_url(base_url, "/v1/messages")
         } else {
-            format!("{}/v1/chat/completions", base_url.trim_end_matches('/'))
+            build_api_url(base_url, "/v1/chat/completions")
         };
         let body = if is_anthropic {
             serde_json::json!({
