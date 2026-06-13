@@ -67,6 +67,16 @@ impl ZenClient {
             cloned["model"] = serde_json::json!(model);
             cloned["messages"] = messages.clone();
             cloned["stream"] = serde_json::json!(stream);
+            // Replace tools with converted ones (Anthropic→OpenAI format) if provided
+            if let Some(tools) = tools {
+                if let Some(arr) = tools.as_array() {
+                    if !arr.is_empty() {
+                        cloned["tools"] = tools.clone();
+                    } else if let Some(obj) = cloned.as_object_mut() {
+                        obj.remove("tools");
+                    }
+                }
+            }
             cloned
         } else {
             // No original body available — build from scratch.
@@ -281,5 +291,31 @@ mod tests {
         assert_eq!(body["model"], "new-model");
         assert_eq!(body["messages"][0]["content"], "new_msg");
         assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn test_with_original_body_anthropic_format_preserves_max_tokens() {
+        // Simulate the Anthropic→OpenAI conversion path in messages_handler:
+        // original body is Anthropic format, we clone and override model/messages/stream.
+        let messages = serde_json::json!([{"role": "user", "content": "hello"}]);
+        let original = serde_json::json!({
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": "original"}],
+            "stream": true,
+            "temperature": 0.5,
+        });
+
+        let (body, _) = ZenClient::build_request_body("minimaxai/minimax-m3", &messages, false, None, Some(&original));
+
+        // Critical: max_tokens must be preserved from the original Anthropic body
+        assert_eq!(body["max_tokens"], 8192);
+        // model and messages must be overridden
+        assert_eq!(body["model"], "minimaxai/minimax-m3");
+        assert_eq!(body["messages"][0]["content"], "hello");
+        // stream must be overridden
+        assert_eq!(body["stream"], false);
+        // temperature preserved from Anthropic body
+        assert!((body["temperature"].as_f64().unwrap() - 0.5).abs() < 0.001);
     }
 }

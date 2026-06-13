@@ -746,7 +746,7 @@ async fn messages_handler(
     let mut last_error = String::from("All models failed");
     for (i, m) in models.iter().enumerate() {
         let (_, body_str) =
-            ZenClient::build_request_body(m, &msgs_val, stream, tools_val.as_ref(), None);
+            ZenClient::build_request_body(m, &msgs_val, stream, tools_val.as_ref(), Some(&body));
         let (ref base_url, ref api_key, ref api_format) = custom_routes[i];
         let result = if !base_url.is_empty() {
             if api_format == "anthropic" {
