@@ -819,6 +819,10 @@ async fn responses_handler(
     if let Some(mot) = body.get("max_output_tokens") {
         converted_body["max_tokens"] = mot.clone();
     }
+    // Default max_tokens for custom providers (like NVIDIA) that require it
+    if converted_body.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(0) == 0 {
+        converted_body["max_tokens"] = serde_json::json!(4096);
+    }
     responses::strip_responses_fields(&mut converted_body);
 
     info!(
