@@ -113,6 +113,34 @@ header "新内置模型"
 test_oai  north-mini-code-free   "north-mini-code-free (OpenAI)"
 test_oai  mimo-v2.5-free         "mimo-v2.5-free (OpenAI)"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 新增端点
+# ═══════════════════════════════════════════════════════════════════════════
+header "新增端点"
+code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:6450/v1/models/deepseek-v4-flash-free") && \
+  [ "$code" = "200" ] && run "GET /v1/models/:model" echo "200" || run "GET /v1/models/:model" echo "got $code"
+
+code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:6450/v1/models/nonexistent") && \
+  [ "$code" = "404" ] && run "GET /v1/models/:model (404)" echo "404" || run "GET /v1/models/:model (404)" echo "got $code"
+
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:6450/v1/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"model":"deepseek-v4-flash-free","prompt":"Reply with OK","max_tokens":50}') && \
+  [ "$code" = "200" ] && run "POST /v1/completions" echo "200" || run "POST /v1/completions" echo "got $code"
+
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:6450/v1/responses/compact" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"model":"ModelPool","input":"Reply with OK","max_output_tokens":50}') && \
+  [ "$code" = "200" ] && run "POST /v1/responses/compact" echo "200" || run "POST /v1/responses/compact" echo "got $code"
+
+code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:6450/v1/embeddings" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $API_KEY" \
+  -d '{"model":"text-embedding-ada-002","input":"hello"}') && \
+  [ "$code" = "200" ] && run "POST /v1/embeddings" echo "200" || run "POST /v1/embeddings" echo "got $code"
+
 # ============================================================================
 echo ""
 bold "═══════════════════════════════════════════════════════════════"

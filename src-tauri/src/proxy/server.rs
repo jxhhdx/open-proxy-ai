@@ -44,9 +44,13 @@ pub struct ProxyState {
 pub fn create_router(state: Arc<ProxyState>) -> Router {
     Router::new()
         .route("/v1/models", get(list_models))
+        .route("/v1/models/:model", get(get_model))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/completions", post(completions_handler))
         .route("/v1/messages", post(messages_handler))
         .route("/v1/responses", post(responses_handler))
+        .route("/v1/responses/compact", post(responses_compact_handler))
+        .route("/v1/embeddings", post(embeddings_handler))
         .route("/health", get(health))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -539,6 +543,83 @@ async fn list_models(
         })
         .collect();
     Json(serde_json::json!({"object": "list", "data": data}))
+}
+
+// ── GET /v1/models/{model} ────────────────────────────────────────────
+
+async fn get_model(
+    State(state): State<Arc<ProxyState>>,
+    axum::extract::Path(model_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let custom = state.custom_models.read().await;
+    let all = get_all_models(&custom);
+    if all.contains(&model_id) {
+        Ok(Json(serde_json::json!({
+            "id": model_id,
+            "object": "model",
+            "created": 1779000000,
+            "owned_by": "free"
+        })))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+// ── POST /v1/completions (legacy → chat completions) ───────────────────
+
+async fn completions_handler(
+    State(state): State<Arc<ProxyState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Convert legacy completions body to chat completions format
+    let mut chat_body = body.clone();
+    let prompt = body.get("prompt");
+    let messages = match prompt {
+        Some(serde_json::Value::String(s)) => {
+            serde_json::json!([{"role": "user", "content": s}])
+        }
+        Some(serde_json::Value::Array(arr)) => {
+            let text: String = arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<&str>>()
+                .join(" ");
+            serde_json::json!([{"role": "user", "content": text}])
+        }
+        _ => serde_json::json!([]),
+    };
+
+    if let Some(obj) = chat_body.as_object_mut() {
+        obj.insert("messages".into(), messages);
+        obj.remove("prompt");
+    }
+
+    chat_completions(State(state), headers, Json(chat_body)).await
+}
+
+// ── POST /v1/embeddings ───────────────────────────────────────────────
+
+async fn embeddings_handler(
+    Json(_body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "object": "list",
+        "data": [],
+        "model": "text-embedding-ada-002",
+        "usage": {"prompt_tokens": 0, "total_tokens": 0}
+    }))
+}
+
+// ── POST /v1/responses/compact ─────────────────────────────────────────
+
+async fn responses_compact_handler(
+    State(state): State<Arc<ProxyState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Same as responses_handler — the "compact" just means Codex strips
+    // the response body for efficiency; our request handling is identical.
+    responses_handler(State(state), headers, Json(body)).await
 }
 
 // ── POST /v1/chat/completions ─────────────────────────────────────────
