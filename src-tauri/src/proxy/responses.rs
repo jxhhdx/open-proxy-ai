@@ -238,7 +238,7 @@ impl ResponsesSseConverter {
             if !text.is_empty() {
                 self.buffer.push_str(text);
                 events.push((
-                    "output_text.delta",
+                    "response.output_text.delta",
                     serde_json::json!({
                         "type": "output_text.delta",
                         "index": 0,
@@ -253,7 +253,7 @@ impl ResponsesSseConverter {
             if !self.finished {
                 self.finished = true;
                 events.push((
-                    "output_text.done",
+                    "response.output_text.done",
                     serde_json::json!({
                         "type": "output_text.done",
                         "index": 0,
@@ -294,61 +294,66 @@ impl ResponsesSseConverter {
         }
         self.finalized = true;
 
-        if self.finished {
-            vec![
-                (
-                    "response.output_item.done",
-                    serde_json::json!({
-                        "type": "response.output_item.done",
-                        "output_index": 0
-                    })
-                    .to_string(),
-                ),
-                (
-                    "response.completed",
-                    serde_json::json!({
-                        "type": "response.completed",
-                        "response": build_response_obj(
-                            &self.resp_id, &self.msg_id, &self.model,
-                            &self.buffer, "completed", self.usage.as_ref()
-                        )
-                    })
-                    .to_string(),
-                ),
-            ]
+        let text = if self.finished {
+            std::mem::take(&mut self.buffer)
         } else {
-            let text = std::mem::take(&mut self.buffer);
-            vec![
-                (
-                    "output_text.done",
-                    serde_json::json!({
-                        "type": "output_text.done",
-                        "index": 0,
-                        "text": &text,
-                    })
-                    .to_string(),
-                ),
-                (
-                    "response.output_item.done",
-                    serde_json::json!({
-                        "type": "response.output_item.done",
-                        "output_index": 0
-                    })
-                    .to_string(),
-                ),
-                (
-                    "response.completed",
-                    serde_json::json!({
-                        "type": "response.completed",
-                        "response": build_response_obj(
-                            &self.resp_id, &self.msg_id, &self.model,
-                            &text, "completed", self.usage.as_ref()
-                        )
-                    })
-                    .to_string(),
-                ),
-            ]
+            std::mem::take(&mut self.buffer)
+        };
+
+        let mut events = vec![];
+
+        // output_text.done (only if not already sent via process_delta)
+        if !self.finished {
+            events.push((
+                "response.output_text.done",
+                serde_json::json!({
+                    "type": "output_text.done",
+                    "index": 0,
+                    "text": &text,
+                })
+                .to_string(),
+            ));
         }
+
+        // content_part.done — required by OpenAI Responses API spec
+        events.push((
+            "response.content_part.done",
+            serde_json::json!({
+                "type": "response.content_part.done",
+                "index": 0,
+                "part": {
+                    "type": "output_text",
+                    "text": &text,
+                    "annotations": []
+                }
+            })
+            .to_string(),
+        ));
+
+        // output_item.done
+        events.push((
+            "response.output_item.done",
+            serde_json::json!({
+                "type": "response.output_item.done",
+                "output_index": 0
+            })
+            .to_string(),
+        ));
+
+        // response.completed
+        events.push((
+            "response.completed",
+            serde_json::json!({
+                "type": "response.completed",
+                "response": build_response_obj(
+                    &self.resp_id, &self.msg_id, &self.model,
+                    &text, "completed", self.usage.as_ref()
+                )
+            })
+            .to_string(),
+        ));
+
+        events
     }
 }
 
@@ -416,7 +421,7 @@ mod tests {
         let delta = serde_json::json!({"content": "Hello"});
         let events = conv.process_delta(&delta, None);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].0, "output_text.delta");
+        assert_eq!(events[0].0, "response.output_text.delta");
 
         let data: Value = serde_json::from_str(&events[0].1).unwrap();
         assert_eq!(data["delta"], "Hello");
@@ -432,7 +437,7 @@ mod tests {
 
         let events = conv.process_delta(&Value::Null, Some("stop"));
         assert_eq!(events.len(), 1, "stop reason emits only output_text.done");
-        assert_eq!(events[0].0, "output_text.done");
+        assert_eq!(events[0].0, "response.output_text.done");
 
         let done: Value = serde_json::from_str(&events[0].1).unwrap();
         assert_eq!(done["text"], "Hi");
@@ -446,7 +451,7 @@ mod tests {
 
         let events = conv.process_delta(&Value::Null, Some("length"));
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].0, "output_text.done");
+        assert_eq!(events[0].0, "response.output_text.done");
         assert_eq!(events[1].0, "response.incomplete");
 
         let inc: Value = serde_json::from_str(&events[1].1).unwrap();
@@ -473,12 +478,13 @@ mod tests {
         // No finish_reason seen
 
         let ev = conv.final_events();
-        assert_eq!(ev.len(), 3);
-        assert_eq!(ev[0].0, "output_text.done");
-        assert_eq!(ev[1].0, "response.output_item.done");
-        assert_eq!(ev[2].0, "response.completed");
+        assert_eq!(ev.len(), 4);
+        assert_eq!(ev[0].0, "response.output_text.done");
+        assert_eq!(ev[1].0, "response.content_part.done");
+        assert_eq!(ev[2].0, "response.output_item.done");
+        assert_eq!(ev[3].0, "response.completed");
 
-        let comp: Value = serde_json::from_str(&ev[2].1).unwrap();
+        let comp: Value = serde_json::from_str(&ev[3].1).unwrap();
         assert_eq!(comp["type"], "response.completed");
         assert_eq!(comp["response"]["status"], "completed");
         assert_eq!(comp["response"]["output"][0]["content"][0]["text"], "Done text");
@@ -492,11 +498,12 @@ mod tests {
         conv.finished = true;
 
         let ev = conv.final_events();
-        assert_eq!(ev.len(), 2);
-        assert_eq!(ev[0].0, "response.output_item.done");
-        assert_eq!(ev[1].0, "response.completed");
+        assert_eq!(ev.len(), 3);
+        assert_eq!(ev[0].0, "response.content_part.done");
+        assert_eq!(ev[1].0, "response.output_item.done");
+        assert_eq!(ev[2].0, "response.completed");
 
-        let comp: Value = serde_json::from_str(&ev[1].1).unwrap();
+        let comp: Value = serde_json::from_str(&ev[2].1).unwrap();
         assert_eq!(comp["type"], "response.completed");
         assert_eq!(comp["response"]["status"], "completed");
         assert_eq!(comp["response"]["output"][0]["content"][0]["text"], "Hello");
@@ -507,7 +514,7 @@ mod tests {
         let mut conv = ResponsesSseConverter::new("m");
         conv.finished = true;
         let ev1 = conv.final_events();
-        assert_eq!(ev1.len(), 2); // output_item.done + response.completed
+        assert_eq!(ev1.len(), 3); // content_part.done + output_item.done + response.completed
         let ev2 = conv.final_events();
         assert_eq!(ev2.len(), 0); // already finalized
     }
