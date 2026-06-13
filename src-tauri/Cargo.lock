@@ -2487,6 +2487,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "tokio-stream",
+ "toml 0.8.2",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",

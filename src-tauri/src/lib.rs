@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
@@ -223,16 +224,7 @@ async fn import_to_tool(
             Ok(format!("✅ 已导入到 Claude Code ({})", path.display()))
         }
         "codex" => {
-            // ~/.codex/config.toml
-            let path = home.join(".codex/config.toml");
-            let _ = std::fs::create_dir_all(path.parent().unwrap());
-            let content = format!(
-                "base_url = \"{}\"\nmodel = \"{}\"\napi_key = \"{}\"\n",
-                base_url_v1, api_model(&req), req.api_key
-            );
-            std::fs::write(&path, content)
-                .map_err(|e| format!("Write error: {}", e))?;
-            Ok(format!("✅ 已导入到 Codex ({})", path.display()))
+            write_codex_config(&home, &base_url_v1, &api_model(&req), &req.api_key)
         }
         "ccswitch" => {
             // Use ccswitch:// deep link protocol (official way)
@@ -368,8 +360,63 @@ fn api_model(req: &ImportRequest) -> String {
     if req.model_name.is_empty() { req.model.clone() } else { req.model_name.clone() }
 }
 
+// ── Codex Config ──────────────────────────────────────────────────────
 
-// ── Tauri Commands ────────────────────────────────────────────────────
+/// Write Codex config.toml and auth.json to the given home directory.
+/// Returns a success message on completion.
+fn write_codex_config(home: &std::path::Path, base_url_v1: &str, model: &str, api_key: &str) -> Result<String, String> {
+    use std::path::Path;
+
+    #[derive(Serialize)]
+    struct CustomProvider {
+        name: String,
+        base_url: String,
+        wire_api: String,
+        requires_openai_auth: bool,
+    }
+
+    #[derive(Serialize)]
+    struct CodexConfig {
+        model_provider: String,
+        model: String,
+        model_reasoning_effort: String,
+        disable_response_storage: bool,
+        #[serde(rename = "model_providers")]
+        model_providers: BTreeMap<String, CustomProvider>,
+    }
+
+    let mut providers = BTreeMap::new();
+    providers.insert("custom".to_string(), CustomProvider {
+        name: "Open Proxy AI".into(),
+        base_url: base_url_v1.to_string(),
+        wire_api: "responses".into(),
+        requires_openai_auth: true,
+    });
+
+    let config = CodexConfig {
+        model_provider: "custom".into(),
+        model: model.to_string(),
+        model_reasoning_effort: "high".into(),
+        disable_response_storage: true,
+        model_providers: providers,
+    };
+
+    let config_path = Path::new(".codex/config.toml");
+    let auth_path = Path::new(".codex/auth.json");
+    let config_dir = home.join(config_path).parent().unwrap().to_path_buf();
+    let _ = std::fs::create_dir_all(&config_dir);
+
+    let toml_str = toml::to_string_pretty(&config).map_err(|e| format!("TOML serialize error: {}", e))?;
+    std::fs::write(home.join(config_path), &toml_str)
+        .map_err(|e| format!("Write error: {}", e))?;
+
+    let auth = serde_json::json!({"OPENAI_API_KEY": api_key});
+    let auth_str = serde_json::to_string_pretty(&auth).map_err(|e| format!("JSON serialize error: {}", e))?;
+    std::fs::write(home.join(auth_path), &auth_str)
+        .map_err(|e| format!("Write error: {}", e))?;
+
+    Ok(format!("✅ 已导入到 Codex ({}, {})", home.join(config_path).display(), home.join(auth_path).display()))
+}
 
 #[tauri::command]
 async fn get_status(
@@ -675,4 +722,77 @@ fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
         .build(app)?;
 
     Ok(())
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_write_codex_config_creates_files() {
+        let tmp = std::env::temp_dir().join(format!("codex_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+
+        let result = write_codex_config(&home, "http://localhost:6446/v1", "deepseek-v4-flash-free", "sk-test-key");
+
+        assert!(result.is_ok(), "write_codex_config should succeed: {:?}", result.err());
+
+        let config_path = home.join(".codex/config.toml");
+        let auth_path = home.join(".codex/auth.json");
+
+        assert!(config_path.exists(), "config.toml should exist");
+        assert!(auth_path.exists(), "auth.json should exist");
+
+        // Verify config.toml content
+        let config_content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(config_content.contains("model_provider = \"custom\""));
+        assert!(config_content.contains("model = \"deepseek-v4-flash-free\""));
+        assert!(config_content.contains("base_url = \"http://localhost:6446/v1\""));
+        assert!(config_content.contains("wire_api = \"responses\""));
+        assert!(config_content.contains("requires_openai_auth = true"));
+
+        // Verify auth.json content
+        let auth_content: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&auth_path).unwrap()).unwrap();
+        assert_eq!(auth_content["OPENAI_API_KEY"], "sk-test-key");
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_write_codex_config_content_format() {
+        let tmp = std::env::temp_dir().join(format!("codex_fmt_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let home = tmp.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+
+        write_codex_config(&home, "http://localhost:6450/v1", "my-model", "sk-123").unwrap();
+
+        let config_content = std::fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+        let auth_content = std::fs::read_to_string(home.join(".codex/auth.json")).unwrap();
+
+        // TOML should be parseable
+        let parsed: toml::Value = toml::from_str(&config_content).unwrap();
+        assert_eq!(parsed["model_provider"].as_str(), Some("custom"));
+        assert_eq!(parsed["model"].as_str(), Some("my-model"));
+        assert_eq!(parsed["model_providers"]["custom"]["base_url"].as_str(), Some("http://localhost:6450/v1"));
+
+        // JSON should be valid
+        let auth_parsed: serde_json::Value = serde_json::from_str(&auth_content).unwrap();
+        assert_eq!(auth_parsed["OPENAI_API_KEY"], "sk-123");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_write_codex_config_errors_on_bad_path() {
+        // A path that can't be written to should produce an error
+        let result = write_codex_config(Path::new("/dev/null/nope"), "http://localhost:6446/v1", "m", "k");
+        assert!(result.is_err());
+    }
 }
