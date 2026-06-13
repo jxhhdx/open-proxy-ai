@@ -58,42 +58,35 @@ impl ZenClient {
         messages: &serde_json::Value,
         stream: bool,
         tools: Option<&serde_json::Value>,
-        extra: Option<&serde_json::Value>,
+        original_body: Option<&serde_json::Value>,
     ) -> (serde_json::Value, String) {
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": messages,
-            "stream": stream,
-        });
+        let body = if let Some(orig) = original_body {
+            // Start from the original request body (preserves every param),
+            // only override the fields we need to change.
+            let mut cloned = orig.clone();
+            cloned["model"] = serde_json::json!(model);
+            cloned["messages"] = messages.clone();
+            cloned["stream"] = serde_json::json!(stream);
+            cloned
+        } else {
+            // No original body available — build from scratch.
+            // This path is used when the original request is in Anthropic format
+            // (messages_handler converting to OpenAI) or for synthetic test requests.
+            let mut body = serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": stream,
+            });
 
-        if let Some(tools) = tools {
-            if let Some(arr) = tools.as_array() {
-                if !arr.is_empty() {
-                    body["tools"] = tools.clone();
-                }
-            }
-        }
-
-        // Pass through extra chat completion params from the original request
-        const PASSTHROUGH_KEYS: &[&str] = &[
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "stop",
-            "frequency_penalty",
-            "presence_penalty",
-            "seed",
-            "response_format",
-        ];
-        if let Some(extra) = extra {
-            if let Some(obj) = extra.as_object() {
-                for key in PASSTHROUGH_KEYS {
-                    if let Some(val) = obj.get(*key) {
-                        body[key] = val.clone();
+            if let Some(tools) = tools {
+                if let Some(arr) = tools.as_array() {
+                    if !arr.is_empty() {
+                        body["tools"] = tools.clone();
                     }
                 }
             }
-        }
+            body
+        };
 
         let body_str = serde_json::to_string(&body).unwrap_or_default();
         (body, body_str)
@@ -192,30 +185,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_request_body_passes_through_max_tokens() {
+    fn test_with_original_body_preserves_all_params() {
         let messages = serde_json::json!([{"role": "user", "content": "hello"}]);
-        let extra = serde_json::json!({"max_tokens": 4096, "temperature": 0.7});
+        let original = serde_json::json!({
+            "model": "ignored",
+            "messages": [],
+            "stream": false,
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "tool_choice": "auto",
+            "n": 2,
+            "user": "test-user",
+            "stop": ["\n\n"],
+        });
 
-        let (body, _) = ZenClient::build_request_body("test-model", &messages, false, None, Some(&extra));
+        let (body, _) = ZenClient::build_request_body("new-model", &messages, true, None, Some(&original));
 
+        // Overridden fields
+        assert_eq!(body["model"], "new-model");
+        assert_eq!(body["messages"], messages);
+        assert_eq!(body["stream"], true);
+        // Preserved fields (no whitelist needed)
         assert_eq!(body["max_tokens"], 4096);
         assert!((body["temperature"].as_f64().unwrap() - 0.7).abs() < 0.001);
-        assert_eq!(body["model"], "test-model");
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["n"], 2);
+        assert_eq!(body["user"], "test-user");
+        assert_eq!(body["stop"][0], "\n\n");
     }
 
     #[test]
-    fn test_build_request_body_without_extra_preserves_standard() {
+    fn test_with_original_body_preserves_unknown_fields() {
+        let messages = serde_json::json!([{"role": "user", "content": "hi"}]);
+        let original = serde_json::json!({
+            "model": "old",
+            "messages": [],
+            "stream": false,
+            "some_future_param": "will_still_be_there",
+            "another_unknown": 42,
+        });
+
+        let (body, _) = ZenClient::build_request_body("new", &messages, true, None, Some(&original));
+
+        assert_eq!(body["some_future_param"], "will_still_be_there");
+        assert_eq!(body["another_unknown"], 42);
+    }
+
+    #[test]
+    fn test_without_original_body_has_standard_fields() {
         let messages = serde_json::json!([{"role": "user", "content": "hello"}]);
 
         let (body, _) = ZenClient::build_request_body("m", &messages, true, None, None);
 
         assert_eq!(body["model"], "m");
         assert_eq!(body["stream"], true);
+        assert_eq!(body["messages"], messages);
+        // No extra params leaked in
         assert!(body.get("max_tokens").is_none());
+        assert!(body.get("temperature").is_none());
     }
 
     #[test]
-    fn test_build_request_body_passes_through_tools() {
+    fn test_without_original_body_but_with_tools() {
         let messages = serde_json::json!([{"role": "user", "content": "hello"}]);
         let tools = serde_json::json!([{"type": "function", "function": {"name": "test", "parameters": {"type": "object", "properties": {}}}}]);
 
@@ -226,13 +257,29 @@ mod tests {
     }
 
     #[test]
-    fn test_build_request_body_ignores_unknown_keys_in_extra() {
+    fn test_without_original_body_skips_empty_tools() {
         let messages = serde_json::json!([{"role": "user", "content": "hello"}]);
-        let extra = serde_json::json!({"unknown_param": 123, "also_wrong": "yes"});
+        let tools = serde_json::json!([]);
 
-        let (body, _) = ZenClient::build_request_body("m", &messages, false, None, Some(&extra));
+        let (body, _) = ZenClient::build_request_body("m", &messages, false, Some(&tools), None);
 
-        assert!(body.get("unknown_param").is_none());
-        assert_eq!(body["model"], "m");
+        // When building from scratch, empty tools array should not add the field
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn test_with_original_body_overrides_model_and_messages() {
+        let messages = serde_json::json!([{"role": "user", "content": "new_msg"}]);
+        let original = serde_json::json!({
+            "model": "old-model",
+            "messages": [{"role": "user", "content": "old_msg"}],
+            "stream": false,
+        });
+
+        let (body, _) = ZenClient::build_request_body("new-model", &messages, true, None, Some(&original));
+
+        assert_eq!(body["model"], "new-model");
+        assert_eq!(body["messages"][0]["content"], "new_msg");
+        assert_eq!(body["stream"], true);
     }
 }

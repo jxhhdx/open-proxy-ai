@@ -568,7 +568,6 @@ async fn chat_completions(
         .get("stream")
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
-    let tools = body.get("tools");
     let session_id = state.sessions.get_session(&user);
 
     info!(
@@ -616,7 +615,7 @@ async fn chat_completions(
     for (i, m) in models.iter().enumerate() {
         // Skip if different from requested and requested is still in list (tried first)
         // Build request for this model
-        let (_, body_str) = ZenClient::build_request_body(m, &messages, stream, tools, Some(&body));
+        let (_, body_str) = ZenClient::build_request_body(m, &messages, stream, None, Some(&body));
         let (ref base_url, ref api_key, ref _api_format) = custom_routes[i];
         let result = if !base_url.is_empty() {
             send_custom_openai(base_url, api_key, &body_str, stream).await
@@ -732,7 +731,7 @@ async fn messages_handler(
     let mut last_error = String::from("All models failed");
     for (i, m) in models.iter().enumerate() {
         let (_, body_str) =
-            ZenClient::build_request_body(m, &msgs_val, stream, tools_val.as_ref(), Some(&body));
+            ZenClient::build_request_body(m, &msgs_val, stream, tools_val.as_ref(), None);
         let (ref base_url, ref api_key, ref api_format) = custom_routes[i];
         let result = if !base_url.is_empty() {
             if api_format == "anthropic" {
