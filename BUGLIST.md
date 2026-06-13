@@ -74,6 +74,41 @@ NVIDIA API 要求显式传入 `max_tokens`，否则返回空 `choices`。
    - `test_build_request_body_ignores_unknown_keys_in_extra`
 
 ---
+
+## BUG-003: Anthropic → OpenAI 请求转换丢失 max_tokens 导致自定义提供者返回空响应
+
+- **发现日期**: 2026-06-13
+- **严重程度**: 高（Anthropic 格式请求转 OpenAI 格式时，NVIDIA 等自定义提供者返回空 choices）
+- **状态**: 已修复
+
+### 现象
+
+通过 `/v1/messages`（Anthropic 格式）请求自定义提供者 `minimaxai/minimax-m3`（NVIDIA API），接口返回 200 OK 但 `choices` 为空数组，导致客户端收不到回复。DeepSeek 等 `anthropic` 格式的提供者不受影响。
+
+### 根因
+
+`messages_handler` 中调用 `build_request_body()` 时传了 `None`（无原始 body），而不是把原始 Anthropic 请求体传进去。结果 body 从零构建，只保留了 `model`、`messages`、`stream`，所有 Anthropic 请求中的参数（`max_tokens`、`temperature` 等）全部丢失。
+
+NVIDIA API 要求显式传入 `max_tokens`，否则返回空 `choices`。
+
+### 历史关联
+
+**BUG-002** 修的是 OpenAI 格式路径（`/v1/chat/completions`）同样的问题——`build_request_body()` 当时用了白名单复制参数会遗漏。那次把 OpenAI 路径修复为克隆原始 body。
+
+但 Anthropic 路径（**这次**的 BUG-003）当时传了 `None`，完全绕过了克隆逻辑，所以 BUG-002 的修复对它无效。
+
+### 修复
+
+- **`server.rs`**: `messages_handler` 中调用 `build_request_body(m, msgs, stream, tools, Some(&body))` 而不是 `None`
+- **`zen.rs`**: `build_request_body` 克隆 body 路径增加 tools 处理（替换 Anthropic→OpenAI 转换后的 tools）
+
+### 如何防止复发
+
+1. 单元测试 `test_with_original_body_anthropic_format_preserves_max_tokens` 覆盖了此场景
+2. 两个路径（OpenAI 和 Anthropic）现在都用了 `Some(&body)` 克隆方式
+
+---
+
 ## Bug 提交流程
 
 1. 发现 bug → 在此文件新增条目
