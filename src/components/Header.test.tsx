@@ -39,7 +39,7 @@ describe("Header", () => {
   it("shows port number when status is available", () => {
     renderWithProviders(
       <Header
-        status={{ running: true, port: 6446, model_count: 5, keys: [], custom_models: [] }}
+        status={{ running: true, port: 6446, key_count: 5, keys: [], custom_models: [] }}
         loading={false}
         onRefresh={() => {}}
         onSettings={() => {}}

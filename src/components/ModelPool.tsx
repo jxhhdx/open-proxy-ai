@@ -8,10 +8,11 @@ import { useI18n } from "../i18n/context";
 const C = { accent: "#6c8cff", surface: "var(--surface)", surface2: "var(--surface2)", border: "var(--border)", text: "var(--text)", muted: "var(--muted)", red: "#f87171", orange: "#fb923c" };
 const btn: React.CSSProperties = { padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none" };
 
-function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest }: any) {
+function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest, activeModelId }: any) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
   const isOpen = entry.provider_type === "opencode";
+  const isActive = entry.id === activeModelId;
   return (
     <div ref={setNodeRef} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8, background: isDragging ? C.surface : C.surface2, border: `1px solid ${isDragging ? C.accent : C.border}`, transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.85 : entry.enabled ? 1 : 0.5, marginBottom: 6 }}>
       <span {...attributes} {...listeners} style={{ color: C.muted, cursor: "grab", fontSize: 16, lineHeight: 1, userSelect: "none" }}>⋮⋮</span>
@@ -20,6 +21,7 @@ function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest }: an
       </button>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: isActive ? "#4ade80" : "#6b7280", boxShadow: isActive ? "0 0 6px rgba(74,222,128,0.5)" : "none" }} />
           <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{entry.name}</span>
           <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4, background: isOpen ? "rgba(108,140,255,0.15)" : "rgba(251,146,60,0.15)", color: isOpen ? C.accent : C.orange }}>{isOpen ? t.pool.opencode : t.pool.custom}</span>
           <span style={{ fontSize: 10, color: C.muted }}>#{entry.priority}</span>
@@ -38,7 +40,7 @@ function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest }: an
   );
 }
 
-export default function ModelPool({ entries, results, setResults, onRefresh, showToast, onAddClick, onEdit }: any) {
+export default function ModelPool({ entries, results, setResults, onRefresh, showToast, onAddClick, onEdit, activeModelId }: any) {
   const { t } = useI18n();
   const [testing, setTesting] = useState(false);
   const [showPoolImp, setShowPoolImp] = useState(false);
@@ -105,7 +107,7 @@ export default function ModelPool({ entries, results, setResults, onRefresh, sho
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={sorted.map((e: any) => e.id)} strategy={verticalListSortingStrategy}>
-            {sorted.map((e: any) => <Row key={e.id} entry={e} result={results[e.name]} onToggle={handleToggle} onRemove={handleRemove} onEdit={onEdit} onImport={handleImport} onTest={handleTest} />)}
+            {sorted.map((e: any) => <Row key={e.id} entry={e} result={results[e.name]} onToggle={handleToggle} onRemove={handleRemove} onEdit={onEdit} onImport={handleImport} onTest={handleTest} activeModelId={activeModelId} />)}
           </SortableContext>
         </DndContext>
       )}

@@ -78,6 +78,7 @@ pub struct TogglePoolRequest {
 pub struct PoolStatus {
     pub pool_mode: bool,
     pub entries: Vec<ModelPoolEntry>,
+    pub active_model_id: Option<String>,
 }
 
 #[tauri::command]
@@ -85,9 +86,11 @@ async fn get_model_pool(
     state: tauri::State<'_, AppState>,
 ) -> Result<PoolStatus, String> {
     let pool = state.proxy.model_pool.read().await;
+    let active = state.proxy.active_model_id.read().await;
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
+        active_model_id: active.clone(),
     })
 }
 
@@ -118,6 +121,7 @@ async fn upsert_pool_entry(
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
+        active_model_id: state.proxy.active_model_id.read().await.clone(),
     })
 }
 
@@ -138,6 +142,7 @@ async fn remove_pool_entry(
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
+        active_model_id: None,
     })
 }
 
@@ -156,6 +161,7 @@ async fn toggle_pool_entry(
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
+        active_model_id: None,
     })
 }
 
@@ -172,6 +178,7 @@ async fn init_pool_builtins(
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
+        active_model_id: None,
     })
 }
 
@@ -190,6 +197,7 @@ async fn init_pool_builtins(
             Ok(PoolStatus {
                 pool_mode: pool.pool_mode,
                 entries: pool.entries.clone(),
+                active_model_id: None,
             })
         }
 #[tauri::command]
@@ -616,6 +624,7 @@ pub fn run() {
                 custom_models: Arc::new(RwLock::new(custom_models)),
                 model_pool: Arc::new(RwLock::new(model_pool)),
                 log: Arc::new(AppLog::new(200)),
+                active_model_id: Arc::new(RwLock::new(None)),
             };
 
             let server_running =

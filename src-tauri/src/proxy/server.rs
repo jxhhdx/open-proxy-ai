@@ -37,6 +37,7 @@ pub struct ProxyState {
     pub custom_models: Arc<RwLock<Vec<String>>>,
     pub model_pool: Arc<RwLock<ModelPool>>,
     pub log: Arc<AppLog>,
+    pub active_model_id: Arc<RwLock<Option<String>>>,
 }
 
 pub fn create_router(state: Arc<ProxyState>) -> Router {
@@ -579,11 +580,13 @@ async fn chat_completions(
 
     let pool = state.model_pool.read().await;
     let mut models: Vec<String> = Vec::new();
+    let mut model_entry_ids: Vec<String> = Vec::new();
     let mut custom_routes: Vec<(String, String, String)> = Vec::new(); // (base_url, api_key, api_format) per model
     if model == "ModelPool" {
         // Route through entire pool by priority
         for e in pool.get_enabled() {
             models.push(e.model_name.clone());
+            model_entry_ids.push(e.id.clone());
             if !e.base_url.is_empty() {
                 custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
             } else {
@@ -598,6 +601,7 @@ async fn chat_completions(
         // Use only this specific model, no pool failover
         if e.enabled {
             models.push(e.model_name.clone());
+            model_entry_ids.push(e.id.clone());
             if !e.base_url.is_empty() {
                 custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
             } else {
@@ -607,6 +611,7 @@ async fn chat_completions(
     }
     if models.is_empty() {
         models.push(model.clone());
+        model_entry_ids.push(String::new());
         custom_routes.push((String::new(), String::new(), String::new()));
     }
     drop(pool);
@@ -628,6 +633,10 @@ async fn chat_completions(
         match result {
             Ok(response) => {
                 info!("Model pool success on {} (attempt {}/{})", m, i + 1, models.len());
+                // Track which model succeeded
+                if !model_entry_ids[i].is_empty() {
+                    *state.active_model_id.write().await = Some(model_entry_ids[i].clone());
+                }
                 return response;
             }
             Err(e) => {
@@ -698,10 +707,12 @@ async fn messages_handler(
     // Resolve ModelPool into prioritized list with failover
     let pool = state.model_pool.read().await;
     let mut models: Vec<String> = Vec::new();
+    let mut model_entry_ids: Vec<String> = Vec::new();
     let mut custom_routes: Vec<(String, String, String)> = Vec::new(); // (base_url, api_key, api_format) per model
     if model == "ModelPool" {
         for e in pool.get_enabled() {
             models.push(e.model_name.clone());
+            model_entry_ids.push(e.id.clone());
             if !e.base_url.is_empty() {
                 custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
             } else {
@@ -715,6 +726,7 @@ async fn messages_handler(
     } else if let Some(e) = pool.get_by_name(&model) {
         if e.enabled {
             models.push(e.model_name.clone());
+            model_entry_ids.push(e.id.clone());
             if !e.base_url.is_empty() {
                 custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
             } else {
@@ -724,6 +736,7 @@ async fn messages_handler(
     }
     if models.is_empty() {
         models.push(model.clone());
+        model_entry_ids.push(String::new());
         custom_routes.push((String::new(), String::new(), String::new()));
     }
     drop(pool);
@@ -766,6 +779,10 @@ async fn messages_handler(
         match result {
             Ok(response) => {
                 info!("Model pool success on {} (attempt {}/{})", m, i + 1, models.len());
+                // Track which model succeeded
+                if !model_entry_ids[i].is_empty() {
+                    *state.active_model_id.write().await = Some(model_entry_ids[i].clone());
+                }
                 return response;
             }
             Err(e) => {

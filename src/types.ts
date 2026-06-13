@@ -19,6 +19,7 @@ export interface ModelPoolEntry {
 export interface PoolStatus {
   pool_mode: boolean;
   entries: ModelPoolEntry[];
+  active_model_id?: string | null;
 }
 
 export interface AppStatus {
