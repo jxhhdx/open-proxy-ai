@@ -20,7 +20,7 @@ export default function Header({ status, loading, onRefresh, onSettings }: {
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: loading ? "#fb923c" : online ? "#4ade80" : "#f87171", boxShadow: online ? "0 0 8px rgba(74,222,128,0.4)" : "none" }} />
             <span style={{ fontSize: 12, color: "var(--muted)" }}>{loading ? t.header.starting : online ? `${t.header.running} :${status!.port}` : t.header.stopped}</span>
             <span style={{ color: "var(--border)", fontSize: 10 }}>|</span>
-            <span onClick={() => copy(`http://localhost:${status!.port}`)} style={{ fontSize: 11, color: "var(--accent)", cursor: "pointer", padding: "1px 6px", borderRadius: 4, background: "rgba(108,140,255,0.08)", border: "1px solid rgba(108,140,255,0.15)" }}>http://localhost:{status!.port}</span>
+            {status && <span onClick={() => copy(`http://localhost:${status.port}`)} style={{ fontSize: 11, color: "var(--accent)", cursor: "pointer", padding: "1px 6px", borderRadius: 4, background: "rgba(108,140,255,0.08)", border: "1px solid rgba(108,140,255,0.15)" }}>http://localhost:{status.port}</span>}
           </div>
         </div>
       </div>

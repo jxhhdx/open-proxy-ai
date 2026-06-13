@@ -845,19 +845,7 @@ pub async fn run_speed_test(
         } else {
             build_api_url(base_url, "/v1/chat/completions")
         };
-        let body = if is_anthropic {
-            serde_json::json!({
-                "model": model_name,
-                "messages": [{"role": "user", "content": "Reply with exactly 'OK' and nothing else."}],
-                "max_tokens": 50,
-            })
-        } else {
-            serde_json::json!({
-                "model": model_name,
-                "messages": test_messages,
-                "stream": false,
-            })
-        };
+        let body = build_speed_test_body(model_name, is_anthropic, &test_messages);
         let json_body = serde_json::to_string(&body).unwrap_or_default();
         let auth_val = if is_anthropic { api_key.clone() } else { format!("Bearer {}", api_key) };
         let auth_header = if is_anthropic { "x-api-key" } else { "Authorization" };
@@ -970,4 +958,65 @@ pub async fn run_speed_test(
         },
     }
     }  // closes else
+}
+
+/// Build the request body for a speed test request to a custom provider.
+///
+/// Extracted as a separate (testable) function so the body shape can be
+/// verified without spinning up an HTTP client.
+fn build_speed_test_body(
+    model_name: &str,
+    is_anthropic: bool,
+    test_messages: &serde_json::Value,
+) -> serde_json::Value {
+    if is_anthropic {
+        serde_json::json!({
+            "model": model_name,
+            "messages": [{"role": "user", "content": "Reply with exactly 'OK' and nothing else."}],
+            "max_tokens": 50,
+        })
+    } else {
+        serde_json::json!({
+            "model": model_name,
+            "messages": test_messages,
+            "max_tokens": 50,
+            "stream": false,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_speed_test_body_openai_has_max_tokens() {
+        let msgs = serde_json::json!([{"role": "user", "content": "test"}]);
+        let body = build_speed_test_body("my-model", false, &msgs);
+
+        assert_eq!(body["model"], "my-model");
+        assert_eq!(body["max_tokens"], 50);
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["messages"][0]["content"], "test");
+    }
+
+    #[test]
+    fn test_speed_test_body_anthropic_has_max_tokens() {
+        let msgs = serde_json::json!([]);
+        let body = build_speed_test_body("claude-model", true, &msgs);
+
+        assert_eq!(body["model"], "claude-model");
+        assert_eq!(body["max_tokens"], 50);
+        assert!(body["messages"][0]["content"].as_str().unwrap().contains("OK"));
+    }
+
+    #[test]
+    fn test_speed_test_body_no_stream_on_openai() {
+        let msgs = serde_json::json!([{"role": "user", "content": "hi"}]);
+        let body = build_speed_test_body("m", false, &msgs);
+
+        assert_eq!(body["stream"], false);
+        // stream is only meaningful for OpenAI path
+        assert!(body.get("stream").is_some());
+    }
 }
