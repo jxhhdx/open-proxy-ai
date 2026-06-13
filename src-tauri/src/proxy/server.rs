@@ -46,6 +46,7 @@ pub fn create_router(state: Arc<ProxyState>) -> Router {
         .route("/v1/models", get(list_models))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/messages", post(messages_handler))
+        .route("/v1/responses", post(responses_handler))
         .route("/health", get(health))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -579,6 +580,85 @@ async fn chat_completions(
         "OpenAI chat completion"
     );
 
+    route_chat_completion(state, user, model, messages, stream, session_id, body).await
+}
+
+// ── POST /v1/responses (OpenAI Responses API → Chat Completions bridge) ──
+
+async fn responses_handler(
+    State(state): State<Arc<ProxyState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let user = match auth_user(&headers, &*state.auth.read().await) {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+
+    let model = match body.get("model").and_then(|m| m.as_str()) {
+        Some(m) => m.to_string(),
+        None => {
+            return (StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": {"message": "Missing model field"}})),
+            ).into_response();
+        }
+    };
+
+    let stream = body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+    let session_id = state.sessions.get_session(&user);
+
+    // Convert Responses API `input` to Chat Completions `messages`
+    let messages = match body.get("input") {
+        Some(serde_json::Value::String(s)) => {
+            serde_json::json!([{"role": "user", "content": s}])
+        }
+        Some(serde_json::Value::Array(arr)) if !arr.is_empty() => {
+            // Try to interpret as message objects; otherwise wrap as user text
+            if arr[0].get("role").is_some() {
+                serde_json::Value::Array(arr.clone())
+            } else {
+                // Array of input_text/input_image items — extract text
+                let texts: Vec<String> = arr.iter()
+                    .filter_map(|item| item.get("text").and_then(|t| t.as_str()).map(String::from))
+                    .collect();
+                if texts.is_empty() {
+                    serde_json::json!([{"role": "user", "content": serde_json::Value::Array(arr.clone())}])
+                } else {
+                    serde_json::json!([{"role": "user", "content": texts.join("\n")}])
+                }
+            }
+        }
+        _ => serde_json::json!([]),
+    };
+
+    // Convert max_output_tokens to max_tokens
+    let mut converted_body = body.clone();
+    if let Some(mot) = body.get("max_output_tokens") {
+        converted_body["max_tokens"] = mot.clone();
+    }
+
+    info!(
+        user = %user,
+        model = %model,
+        stream = %stream,
+        "OpenAI Responses API (converted to Chat Completions)"
+    );
+
+    route_chat_completion(state, user, model, messages, stream, session_id, converted_body).await
+}
+
+async fn route_chat_completion(
+    state: Arc<ProxyState>,
+    _user: String,
+    model: String,
+    messages: serde_json::Value,
+    stream: bool,
+    session_id: String,
+    body: serde_json::Value,
+) -> Response {
     let pool = state.model_pool.read().await;
     let mut models: Vec<String> = Vec::new();
     let mut model_entry_ids: Vec<String> = Vec::new();
