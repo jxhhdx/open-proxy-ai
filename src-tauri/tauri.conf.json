@@ -1,6 +1,6 @@
 {
   "productName": "Open Proxy AI",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "identifier": "com.openproxyai",
   "build": {
     "frontendDist": "../dist",
