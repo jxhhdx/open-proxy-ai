@@ -12,6 +12,7 @@ const RESPONSES_ONLY_FIELDS: &[&str] = &[
     "client_metadata",
     "prompt_cache_key",
     "reasoning",
+    "thinking",
     "tools",
     "tool_choice",
     "parallel_tool_calls",
@@ -606,6 +607,7 @@ mod tests {
             "client_metadata": {},
             "prompt_cache_key": "x",
             "reasoning": {},
+            "thinking": {"type": "enabled"},
             "tools": [{"type": "web_search_preview"}],
             "tool_choice": "auto",
             "parallel_tool_calls": true,
@@ -616,7 +618,7 @@ mod tests {
         strip_responses_fields(&mut body);
         for field in &["input", "instructions", "include", "previous_response_id",
                        "store", "stream_options", "client_metadata", "prompt_cache_key",
-                       "reasoning", "tools", "tool_choice", "parallel_tool_calls"] {
+                       "reasoning", "thinking", "tools", "tool_choice", "parallel_tool_calls"] {
             assert!(body.get(field).is_none(), "{} should be removed", field);
         }
         assert!(body.get("model").is_some());
