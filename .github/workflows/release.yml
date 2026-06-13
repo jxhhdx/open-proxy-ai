@@ -30,11 +30,13 @@ jobs:
         run: cargo install tauri-cli --version "^2.0"
 
       - name: Build
-        run: cargo tauri build --manifest-path src-tauri/Cargo.toml
+        run: cargo tauri build
+        working-directory: src-tauri
 
       - name: Ad-hoc sign (fix "damaged" on macOS)
+        working-directory: src-tauri
         run: |
-          APP="src-tauri/target/release/bundle/macos/Open Proxy AI.app"
+          APP="target/release/bundle/macos/Open Proxy AI.app"
           codesign --force --deep --sign - "$APP"
           xattr -dr com.apple.quarantine "$APP"
 
