@@ -240,7 +240,7 @@ impl ResponsesSseConverter {
                 events.push((
                     "response.output_text.delta",
                     serde_json::json!({
-                        "type": "output_text.delta",
+                        "type": "response.output_text.delta",
                         "index": 0,
                         "delta": text,
                     })
@@ -255,7 +255,7 @@ impl ResponsesSseConverter {
                 events.push((
                     "response.output_text.done",
                     serde_json::json!({
-                        "type": "output_text.done",
+                        "type": "response.output_text.done",
                         "index": 0,
                         "text": &self.buffer,
                     })
@@ -307,7 +307,7 @@ impl ResponsesSseConverter {
             events.push((
                 "response.output_text.done",
                 serde_json::json!({
-                    "type": "output_text.done",
+                    "type": "response.output_text.done",
                     "index": 0,
                     "text": &text,
                 })
