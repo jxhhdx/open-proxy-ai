@@ -26,6 +26,9 @@ jobs:
       - name: Install frontend deps
         run: npm install
 
+      - name: Install cargo-tauri
+        run: cargo install tauri-cli --version "^2.0"
+
       - name: Build
         run: cargo tauri build --manifest-path src-tauri/Cargo.toml
 
