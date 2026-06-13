@@ -238,7 +238,7 @@ impl ResponsesSseConverter {
             if !text.is_empty() {
                 self.buffer.push_str(text);
                 events.push((
-                    "response.output_text.delta",
+                    "output_text.delta",
                     serde_json::json!({
                         "type": "output_text.delta",
                         "index": 0,
@@ -253,7 +253,7 @@ impl ResponsesSseConverter {
             if !self.finished {
                 self.finished = true;
                 events.push((
-                    "response.output_text.done",
+                    "output_text.done",
                     serde_json::json!({
                         "type": "output_text.done",
                         "index": 0,
@@ -320,7 +320,7 @@ impl ResponsesSseConverter {
             let text = std::mem::take(&mut self.buffer);
             vec![
                 (
-                    "response.output_text.done",
+                    "output_text.done",
                     serde_json::json!({
                         "type": "output_text.done",
                         "index": 0,
@@ -416,7 +416,7 @@ mod tests {
         let delta = serde_json::json!({"content": "Hello"});
         let events = conv.process_delta(&delta, None);
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].0, "response.output_text.delta");
+        assert_eq!(events[0].0, "output_text.delta");
 
         let data: Value = serde_json::from_str(&events[0].1).unwrap();
         assert_eq!(data["delta"], "Hello");
@@ -432,7 +432,7 @@ mod tests {
 
         let events = conv.process_delta(&Value::Null, Some("stop"));
         assert_eq!(events.len(), 1, "stop reason emits only output_text.done");
-        assert_eq!(events[0].0, "response.output_text.done");
+        assert_eq!(events[0].0, "output_text.done");
 
         let done: Value = serde_json::from_str(&events[0].1).unwrap();
         assert_eq!(done["text"], "Hi");
@@ -446,7 +446,7 @@ mod tests {
 
         let events = conv.process_delta(&Value::Null, Some("length"));
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].0, "response.output_text.done");
+        assert_eq!(events[0].0, "output_text.done");
         assert_eq!(events[1].0, "response.incomplete");
 
         let inc: Value = serde_json::from_str(&events[1].1).unwrap();
@@ -474,7 +474,7 @@ mod tests {
 
         let ev = conv.final_events();
         assert_eq!(ev.len(), 3);
-        assert_eq!(ev[0].0, "response.output_text.done");
+        assert_eq!(ev[0].0, "output_text.done");
         assert_eq!(ev[1].0, "response.output_item.done");
         assert_eq!(ev[2].0, "response.completed");
 
