@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tauri::{
@@ -196,8 +197,8 @@ async fn import_to_tool(
     req: ImportRequest,
 ) -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
-    let base_url = "http://localhost:6446";
-    let base_url_v1 = "http://localhost:6446/v1";
+    let base_url = proxy_url();
+    let base_url_v1 = proxy_url_v1();
     let display_name = format!("Open Proxy AI ({})", req.model);
 
     match req.tool.as_str() {
@@ -236,7 +237,7 @@ async fn import_to_tool(
         "ccswitch" => {
             // Use ccswitch:// deep link protocol (official way)
             let encoded_name = urlencoding(&display_name);
-            let encoded_endpoint = urlencoding(base_url);
+            let encoded_endpoint = urlencoding(&base_url);
             let encoded_key = urlencoding(&req.api_key);
             let encoded_model = urlencoding(&api_model(&req));
             let encoded_homepage = urlencoding("https://github.com/jxhhdx/open-proxy-ai");
@@ -378,7 +379,7 @@ async fn get_status(
     let custom = state.proxy.custom_models.read().await;
     Ok(AppStatus {
         running: state.server_running.load(std::sync::atomic::Ordering::Relaxed),
-        port: 6446,
+        port: state.actual_port.load(Ordering::Relaxed),
         model_count: proxy::server::MODELS.len() + custom.len(),
         keys: auth.get_keys(),
         custom_models: custom.clone(),
@@ -472,28 +473,52 @@ async fn run_speed_test_cmd(
 pub struct AppState {
     pub proxy: ProxyState,
     pub server_running: std::sync::atomic::AtomicBool,
+    pub actual_port: Arc<AtomicU16>,
     pub config_dir: Option<PathBuf>,
+}
+
+// ── Port Config ────────────────────────────────────────────────────────
+
+fn get_port() -> u16 {
+    std::env::var("OPEN_PROXY_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6446)
+}
+
+fn proxy_url() -> String {
+    format!("http://localhost:{}", get_port())
+}
+
+fn proxy_url_v1() -> String {
+    format!("http://localhost:{}/v1", get_port())
 }
 
 // ── Server Start ──────────────────────────────────────────────────────
 
-async fn start_proxy_server(state: ProxyState, port: u16) {
+async fn start_proxy_server(state: ProxyState, actual_port: Arc<AtomicU16>, preferred_port: u16) {
     let app = proxy::server::create_router(Arc::new(state.clone()));
-    let addr = format!("0.0.0.0:{}", port);
 
-    info!("Starting proxy server on {}", addr);
-
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!("Failed to bind to {}: {}", addr, e);
-            return;
+    for port in preferred_port..=preferred_port.saturating_add(100) {
+        let addr = format!("0.0.0.0:{}", port);
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                info!("Proxy server started on {}", addr);
+                actual_port.store(port, Ordering::Relaxed);
+                axum::serve(listener, app).await.unwrap_or_else(|e| {
+                    tracing::error!("Server error: {}", e);
+                });
+                return;
+            }
+            Err(e) => {
+                if port == preferred_port.saturating_add(100) {
+                    tracing::error!("Failed to find an available port after 100 attempts");
+                    return;
+                }
+                tracing::warn!("Port {} unavailable ({}), trying {}...", port, e, port + 1);
+            }
         }
-    };
-
-    axum::serve(listener, app).await.unwrap_or_else(|e| {
-        tracing::error!("Server error: {}", e);
-    });
+    }
 }
 
 // ── Tauri App ─────────────────────────────────────────────────────────
@@ -532,10 +557,10 @@ pub fn run() {
             // Load model pool
             let pool_path = config_dir.join("model_pool.json");
             let mut model_pool = ModelPool::load(&pool_path);
-            if model_pool.entries.is_empty() {
-                model_pool.init_builtins(&proxy::server::MODELS);
-                model_pool.save(&pool_path);
-            }
+            // Always refresh builtin models to keep names in sync with upstream
+            model_pool.migrate_renamed_builtins();
+            model_pool.init_builtins(&proxy::server::MODELS);
+            model_pool.save(&pool_path);
 
             let proxy_state = ProxyState {
                 auth: Arc::new(RwLock::new(auth)),
@@ -548,10 +573,12 @@ pub fn run() {
 
             let server_running =
                 std::sync::atomic::AtomicBool::new(false);
+            let actual_port = Arc::new(AtomicU16::new(get_port()));
 
             let app_state = AppState {
                 proxy: proxy_state.clone(),
                 server_running,
+                actual_port: actual_port.clone(),
                 config_dir: Some(config_dir),
             };
 
@@ -562,7 +589,7 @@ pub fn run() {
             let handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
-                start_proxy_server(state_for_server, 6446).await;
+                start_proxy_server(state_for_server, actual_port, get_port()).await;
             });
 
             // Mark as running (small delay to let server bind)

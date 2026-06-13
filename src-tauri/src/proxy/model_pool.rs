@@ -168,6 +168,37 @@ impl ModelPool {
             });
         }
     }
+
+    /// Migrate built-in model entries and deleted_builtins after upstream renames.
+    /// Call this BEFORE `init_builtins` so that `deleted_builtins` references
+    /// point to the current model IDs.
+    pub fn migrate_renamed_builtins(&mut self) {
+        const RENAMES: &[(&str, &str)] = &[
+            ("opencode-nemotron-3-super-free", "opencode-nemotron-3-ultra-free"),
+        ];
+
+        // Rename entries that still use the old name
+        for entry in &mut self.entries {
+            for (old_id, new_id) in RENAMES {
+                if entry.id == *old_id {
+                    entry.id = new_id.to_string();
+                    let new_name = new_id.strip_prefix("opencode-").unwrap_or(new_id);
+                    entry.name = new_name.to_string();
+                    entry.model_name = new_name.to_string();
+                }
+            }
+        }
+
+        // Migrate deleted_builtins
+        for (old_id, new_id) in RENAMES {
+            if let Some(pos) = self.deleted_builtins.iter().position(|id| id == old_id) {
+                self.deleted_builtins.remove(pos);
+                if !self.deleted_builtins.iter().any(|id| id == new_id) {
+                    self.deleted_builtins.push(new_id.to_string());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -423,5 +454,115 @@ mod tests {
 
         assert!(pool.get_by_name("keep-me").is_some());
         assert_eq!(pool.entries.len(), TEST_MODELS.len() + 1);
+    }
+
+    // ── Migration tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_migrate_renamed_builtins_updates_entry_id() {
+        let mut pool = ModelPool::new();
+        // Manually add an entry with the OLD nemotron name
+        pool.upsert(ModelPoolEntry {
+            id: "opencode-nemotron-3-super-free".into(),
+            name: "nemotron-3-super-free".into(),
+            model_name: "nemotron-3-super-free".into(),
+            priority: 1,
+            enabled: true,
+            builtin: true,
+            provider_type: "opencode".into(),
+            api_format: "openai".into(),
+            base_url: String::new(),
+            api_key: String::new(),
+        });
+
+        pool.migrate_renamed_builtins();
+
+        let entry = pool.get_by_id("opencode-nemotron-3-ultra-free");
+        assert!(entry.is_some(), "Entry should be migrated to new ID");
+        assert_eq!(entry.unwrap().name, "nemotron-3-ultra-free");
+        assert_eq!(entry.unwrap().model_name, "nemotron-3-ultra-free");
+        // Old ID should no longer exist
+        assert!(pool.get_by_id("opencode-nemotron-3-super-free").is_none());
+    }
+
+    #[test]
+    fn test_migrate_renamed_builtins_updates_deleted_builtins() {
+        let mut pool = ModelPool::new();
+        pool.deleted_builtins.push("opencode-nemotron-3-super-free".into());
+
+        pool.migrate_renamed_builtins();
+
+        assert!(!pool.deleted_builtins.contains(&"opencode-nemotron-3-super-free".into()),
+            "Old deleted_builtins ID should be removed");
+        assert!(pool.deleted_builtins.contains(&"opencode-nemotron-3-ultra-free".into()),
+            "New deleted_builtins ID should be present");
+        // Should still be exactly one entry
+        assert_eq!(pool.deleted_builtins.len(), 1);
+    }
+
+    #[test]
+    fn test_migrate_renamed_builtins_skips_unrelated_entries() {
+        let mut pool = ModelPool::new();
+        pool.init_builtins(TEST_MODELS);
+        pool.upsert(make_custom_entry("custom-1", "my-custom", 99));
+        let count_before = pool.entries.len();
+
+        pool.migrate_renamed_builtins();
+
+        // No rename applies to TEST_MODELS, so entries should be unchanged
+        assert_eq!(pool.entries.len(), count_before);
+        assert!(pool.get_by_name("my-custom").is_some());
+        assert!(pool.get_by_name("deepseek-v4-flash-free").is_some());
+    }
+
+    #[test]
+    fn test_init_builtins_after_migration_creates_correct_entries() {
+        let mut pool = ModelPool::new();
+        // Simulate an existing pool with the old nemotron name
+        pool.upsert(ModelPoolEntry {
+            id: "opencode-nemotron-3-super-free".into(),
+            name: "nemotron-3-super-free".into(),
+            model_name: "nemotron-3-super-free".into(),
+            priority: 999,
+            enabled: false,
+            builtin: true,
+            provider_type: "opencode".into(),
+            api_format: "openai".into(),
+            base_url: String::new(),
+            api_key: String::new(),
+        });
+
+        // Migration should update the entry, then init_builtins replaces it
+        pool.migrate_renamed_builtins();
+        let new_models = &[
+            "deepseek-v4-flash-free",
+            "big-pickle",
+            "nemotron-3-ultra-free",
+        ];
+        pool.init_builtins(new_models);
+
+        let entry = pool.get_by_name("nemotron-3-ultra-free");
+        assert!(entry.is_some(), "nemotron-3-ultra-free should be created by init_builtins");
+        let entry = entry.unwrap();
+        assert!(entry.enabled, "init_builtins creates entries as enabled");
+        assert_eq!(entry.priority, 3, "Priority should be based on position in MODELS list");
+        assert_eq!(entry.id, "opencode-nemotron-3-ultra-free");
+    }
+
+    #[test]
+    fn test_init_builtins_idempotent() {
+        let mut pool = ModelPool::new();
+        let new_models = &[
+            "deepseek-v4-flash-free",
+            "big-pickle",
+            "nemotron-3-ultra-free",
+        ];
+
+        pool.init_builtins(new_models);
+        assert_eq!(pool.entries.len(), 3);
+
+        // Second call should not duplicate entries
+        pool.init_builtins(new_models);
+        assert_eq!(pool.entries.len(), 3, "init_builtins should be idempotent");
     }
 }
