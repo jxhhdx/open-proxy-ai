@@ -109,6 +109,36 @@ NVIDIA API 要求显式传入 `max_tokens`，否则返回空 `choices`。
 
 ---
 
+## BUG-004: 日志时间戳显示 UTC 时间而非本地时间
+
+- **发现日期**: 2026-06-13
+- **严重程度**: 中（日志时间与实际时间相差 8 小时，影响调试体验）
+- **状态**: 已修复
+
+### 现象
+
+Settings 页面日志显示的 `time` 是 UTC 时间（类似英国时间）。用户在北京时区（UTC+8），日志中的 `09:40:35` 实际应该是北京时间 `17:40:35`。
+
+### 根因
+
+`src-tauri/src/proxy/log.rs` 中 `fmt_time()` 函数直接对 UNIX epoch 秒数取模计算时/分/秒，没有加本地时区偏移：
+
+```rust
+let secs = d.as_secs() % 86400;  // 纯 UTC
+```
+
+### 修复
+
+- 使用 `chrono::Local::now()` 获取本地时间
+- `src-tauri/Cargo.toml` 添加 `chrono = "0.4"` 依赖
+
+### 如何防止复发
+
+1. 单元测试 `test_log_entry_has_local_time` 验证日志时间格式为 `HH:MM:SS`
+2. 单元测试 `test_log_respects_max_entries` 验证日志环形缓冲区行为
+
+---
+
 ## Bug 提交流程
 
 1. 发现 bug → 在此文件新增条目
