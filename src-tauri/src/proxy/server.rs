@@ -38,6 +38,7 @@ pub struct ProxyState {
     pub model_pool: Arc<RwLock<ModelPool>>,
     pub log: Arc<AppLog>,
     pub active_model_id: Arc<RwLock<Option<String>>>,
+    pub active_at: Arc<RwLock<Option<std::time::SystemTime>>>,
 }
 
 pub fn create_router(state: Arc<ProxyState>) -> Router {
@@ -636,6 +637,7 @@ async fn chat_completions(
                 // Track which model succeeded
                 if !model_entry_ids[i].is_empty() {
                     *state.active_model_id.write().await = Some(model_entry_ids[i].clone());
+                    *state.active_at.write().await = Some(std::time::SystemTime::now());
                 }
                 return response;
             }
@@ -782,6 +784,7 @@ async fn messages_handler(
                 // Track which model succeeded
                 if !model_entry_ids[i].is_empty() {
                     *state.active_model_id.write().await = Some(model_entry_ids[i].clone());
+                    *state.active_at.write().await = Some(std::time::SystemTime::now());
                 }
                 return response;
             }

@@ -14,6 +14,7 @@ function AppInner() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [pool, setPool] = useState<ModelPoolEntry[]>([]);
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  const [activeAt, setActiveAt] = useState<number | null>(null);
   const [results, setResults] = useState<Record<string, any>>({});
   const [toast, setToast] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -33,6 +34,7 @@ function AppInner() {
       setStatus(s);
       setPool(p.entries);
       setActiveModelId(p.active_model_id ?? null);
+      setActiveAt(p.active_at ? Number(p.active_at) : null);
     } catch {}
     setLoading(false);
   }, []);
@@ -43,7 +45,7 @@ function AppInner() {
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 24px" }}>
       <Header status={status} loading={loading} onRefresh={refresh} onSettings={() => setShowSettings(true)} />
       <ApiKeys keys={status?.keys || []} showToast={showToast} />
-      <ModelPool entries={pool} activeModelId={activeModelId} results={results} setResults={setResults} onRefresh={refresh} showToast={showToast} onAddClick={() => setShowAdd(true)} onEdit={(e: ModelPoolEntry) => setEditingEntry(e)} />
+      <ModelPool entries={pool} activeModelId={activeModelId} activeAt={activeAt} results={results} setResults={setResults} onRefresh={refresh} showToast={showToast} onAddClick={() => setShowAdd(true)} onEdit={(e: ModelPoolEntry) => setEditingEntry(e)} />
       {(showAdd || editingEntry) && <AddProviderDialog entry={editingEntry} onClose={() => { setShowAdd(false); setEditingEntry(null); }} onAdded={() => { setShowAdd(false); setEditingEntry(null); refresh(); }} showToast={showToast} />}
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
       <Toast message={toast} />

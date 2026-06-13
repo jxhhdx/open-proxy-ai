@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 use tokio::sync::RwLock;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -79,6 +80,7 @@ pub struct PoolStatus {
     pub pool_mode: bool,
     pub entries: Vec<ModelPoolEntry>,
     pub active_model_id: Option<String>,
+    pub active_at: Option<u128>,
 }
 
 #[tauri::command]
@@ -87,10 +89,13 @@ async fn get_model_pool(
 ) -> Result<PoolStatus, String> {
     let pool = state.proxy.model_pool.read().await;
     let active = state.proxy.active_model_id.read().await;
+    let active_at_raw = state.proxy.active_at.read().await;
+    let active_at = active_at_raw.and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis());
     Ok(PoolStatus {
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
         active_model_id: active.clone(),
+        active_at,
     })
 }
 
@@ -122,6 +127,7 @@ async fn upsert_pool_entry(
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
         active_model_id: state.proxy.active_model_id.read().await.clone(),
+        active_at: None,
     })
 }
 
@@ -143,6 +149,7 @@ async fn remove_pool_entry(
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
         active_model_id: None,
+        active_at: None,
     })
 }
 
@@ -162,6 +169,7 @@ async fn toggle_pool_entry(
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
         active_model_id: None,
+        active_at: None,
     })
 }
 
@@ -179,6 +187,7 @@ async fn init_pool_builtins(
         pool_mode: pool.pool_mode,
         entries: pool.entries.clone(),
         active_model_id: None,
+        active_at: None,
     })
 }
 
@@ -198,6 +207,7 @@ async fn init_pool_builtins(
                 pool_mode: pool.pool_mode,
                 entries: pool.entries.clone(),
                 active_model_id: None,
+        active_at: None,
             })
         }
 #[tauri::command]
@@ -625,6 +635,7 @@ pub fn run() {
                 model_pool: Arc::new(RwLock::new(model_pool)),
                 log: Arc::new(AppLog::new(200)),
                 active_model_id: Arc::new(RwLock::new(None)),
+                active_at: Arc::new(RwLock::new(None)),
             };
 
             let server_running =

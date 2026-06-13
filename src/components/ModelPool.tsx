@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -8,11 +8,11 @@ import { useI18n } from "../i18n/context";
 const C = { accent: "#6c8cff", surface: "var(--surface)", surface2: "var(--surface2)", border: "var(--border)", text: "var(--text)", muted: "var(--muted)", red: "#f87171", orange: "#fb923c" };
 const btn: React.CSSProperties = { padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none" };
 
-function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest, activeModelId }: any) {
+function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest, activeModelId, activeAt }: any) {
   const { t } = useI18n();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id });
   const isOpen = entry.provider_type === "opencode";
-  const isActive = entry.id === activeModelId;
+  const isActive = entry.id === activeModelId && activeAt != null && (Date.now() - activeAt) < 10000;
   return (
     <div ref={setNodeRef} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8, background: isDragging ? C.surface : C.surface2, border: `1px solid ${isDragging ? C.accent : C.border}`, transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.85 : entry.enabled ? 1 : 0.5, marginBottom: 6 }}>
       <span {...attributes} {...listeners} style={{ color: C.muted, cursor: "grab", fontSize: 16, lineHeight: 1, userSelect: "none" }}>⋮⋮</span>
@@ -40,11 +40,18 @@ function Row({ entry, result, onToggle, onRemove, onEdit, onImport, onTest, acti
   );
 }
 
-export default function ModelPool({ entries, results, setResults, onRefresh, showToast, onAddClick, onEdit, activeModelId }: any) {
+export default function ModelPool({ entries, results, setResults, onRefresh, showToast, onAddClick, onEdit, activeModelId, activeAt }: any) {
   const { t } = useI18n();
   const [testing, setTesting] = useState(false);
   const [showPoolImp, setShowPoolImp] = useState(false);
+  const [tick, setTick] = useState(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  // Re-render every 2s so the active indicator (10s timeout) updates in real-time
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 2000);
+    return () => clearInterval(id);
+  }, []);
 
   const handleDragEnd = useCallback(async (e: DragEndEvent) => {
     const { active, over } = e;
@@ -107,7 +114,7 @@ export default function ModelPool({ entries, results, setResults, onRefresh, sho
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={sorted.map((e: any) => e.id)} strategy={verticalListSortingStrategy}>
-            {sorted.map((e: any) => <Row key={e.id} entry={e} result={results[e.name]} onToggle={handleToggle} onRemove={handleRemove} onEdit={onEdit} onImport={handleImport} onTest={handleTest} activeModelId={activeModelId} />)}
+            {sorted.map((e: any) => <Row key={e.id} entry={e} result={results[e.name]} onToggle={handleToggle} onRemove={handleRemove} onEdit={onEdit} onImport={handleImport} onTest={handleTest} activeModelId={activeModelId} activeAt={activeAt} />)}
           </SortableContext>
         </DndContext>
       )}
