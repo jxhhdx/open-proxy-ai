@@ -552,16 +552,6 @@ async fn get_model(
     State(state): State<Arc<ProxyState>>,
     axum::extract::Path(model_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // ModelPool is a special routing alias, not a real model, but clients
-    // (Codex, etc.) query it for metadata. Return a stub so they don't warn.
-    if model_id == "ModelPool" {
-        return Ok(Json(serde_json::json!({
-            "id": "ModelPool",
-            "object": "model",
-            "created": 1779000000,
-            "owned_by": "open-proxy-ai"
-        })));
-    }
     let custom = state.custom_models.read().await;
     let all = get_all_models(&custom);
     if all.contains(&model_id) {
