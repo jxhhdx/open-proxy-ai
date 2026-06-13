@@ -19,6 +19,7 @@ use super::anthropic::{anthropic_to_openai, openai_to_anthropic, AnthropicStream
 use super::auth::AuthManager;
 use super::log::AppLog;
 use super::model_pool::ModelPool;
+use super::responses;
 use super::zen::{SessionManager, ZenClient};
 
 pub const MODELS: &[&str] = &[
@@ -44,9 +45,13 @@ pub struct ProxyState {
 pub fn create_router(state: Arc<ProxyState>) -> Router {
     Router::new()
         .route("/v1/models", get(list_models))
+        .route("/v1/models/:model", get(get_model))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/completions", post(completions_handler))
         .route("/v1/messages", post(messages_handler))
         .route("/v1/responses", post(responses_handler))
+        .route("/v1/responses/compact", post(responses_compact_handler))
+        .route("/v1/embeddings", post(embeddings_handler))
         .route("/health", get(health))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -541,6 +546,93 @@ async fn list_models(
     Json(serde_json::json!({"object": "list", "data": data}))
 }
 
+// ── GET /v1/models/{model} ────────────────────────────────────────────
+
+async fn get_model(
+    State(state): State<Arc<ProxyState>>,
+    axum::extract::Path(model_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // ModelPool is a special routing alias, not a real model, but clients
+    // (Codex, etc.) query it for metadata. Return a stub so they don't warn.
+    if model_id == "ModelPool" {
+        return Ok(Json(serde_json::json!({
+            "id": "ModelPool",
+            "object": "model",
+            "created": 1779000000,
+            "owned_by": "open-proxy-ai"
+        })));
+    }
+    let custom = state.custom_models.read().await;
+    let all = get_all_models(&custom);
+    if all.contains(&model_id) {
+        Ok(Json(serde_json::json!({
+            "id": model_id,
+            "object": "model",
+            "created": 1779000000,
+            "owned_by": "free"
+        })))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+// ── POST /v1/completions (legacy → chat completions) ───────────────────
+
+async fn completions_handler(
+    State(state): State<Arc<ProxyState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Convert legacy completions body to chat completions format
+    let mut chat_body = body.clone();
+    let prompt = body.get("prompt");
+    let messages = match prompt {
+        Some(serde_json::Value::String(s)) => {
+            serde_json::json!([{"role": "user", "content": s}])
+        }
+        Some(serde_json::Value::Array(arr)) => {
+            let text: String = arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<&str>>()
+                .join(" ");
+            serde_json::json!([{"role": "user", "content": text}])
+        }
+        _ => serde_json::json!([]),
+    };
+
+    if let Some(obj) = chat_body.as_object_mut() {
+        obj.insert("messages".into(), messages);
+        obj.remove("prompt");
+    }
+
+    chat_completions(State(state), headers, Json(chat_body)).await
+}
+
+// ── POST /v1/embeddings ───────────────────────────────────────────────
+
+async fn embeddings_handler(
+    Json(_body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "object": "list",
+        "data": [],
+        "model": "text-embedding-ada-002",
+        "usage": {"prompt_tokens": 0, "total_tokens": 0}
+    }))
+}
+
+// ── POST /v1/responses/compact ─────────────────────────────────────────
+
+async fn responses_compact_handler(
+    State(state): State<Arc<ProxyState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    // Same as responses_handler — the "compact" just means Codex strips
+    // the response body for efficiency; our request handling is identical.
+    responses_handler(State(state), headers, Json(body)).await
+}
+
 // ── POST /v1/chat/completions ─────────────────────────────────────────
 
 async fn chat_completions(
@@ -585,6 +677,96 @@ async fn chat_completions(
 
 // ── POST /v1/responses (OpenAI Responses API → Chat Completions bridge) ──
 
+/// Convert a Chat Completions SSE stream into Responses API SSE events.
+async fn wrap_stream_as_responses(
+    upstream_resp: reqwest::Response,
+    model: &str,
+) -> Result<Response, String> {
+    let status = upstream_resp.status();
+    if status != 200 {
+        let text = upstream_resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status.as_u16(), text));
+    }
+
+    let model = model.to_string();
+    info!(model = %model, "wrap_stream_as_responses — starting SSE conversion");
+
+    let mut converter = responses::ResponsesSseConverter::new(&model);
+    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(64);
+
+    // Send initial response.created / output_item.added / content_part.added events
+    for (event, data) in converter.initial_events() {
+        let sse = format!("event: {}\ndata: {}\n\n", event, data);
+        let _ = tx.send(Bytes::from(sse)).await;
+    }
+
+    tokio::spawn(async move {
+        let mut buffer = String::new();
+        let mut upstream_stream = upstream_resp.bytes_stream();
+
+        while let Some(chunk) = upstream_stream.next().await {
+            let chunk = match chunk {
+                Ok(b) => b,
+                Err(_) => break,
+            };
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(nl) = buffer.find('\n') {
+                let line = buffer[..nl].trim().to_string();
+                buffer = buffer[nl + 1..].to_string();
+
+                if !line.starts_with("data: ") {
+                    continue;
+                }
+                let payload = line[6..].trim().to_string();
+                if payload == "[DONE]" {
+                    continue;
+                }
+
+                let parsed: serde_json::Value = match serde_json::from_str(&payload) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                // Capture usage data from upstream (may be in final chunk)
+                converter.set_usage(&parsed);
+
+                let delta = parsed.pointer("/choices/0/delta");
+                let finish_reason = parsed
+                    .pointer("/choices/0/finish_reason")
+                    .and_then(|f| f.as_str());
+
+                if let Some(d) = delta {
+                    let events = converter.process_delta(d, finish_reason);
+                    for (event, data) in events {
+                        let sse = format!("event: {}\ndata: {}\n\n", event, data);
+                        if tx.send(Bytes::from(sse)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Send done / completed events
+        for (event, data) in converter.final_events() {
+            let sse = format!("event: {}\ndata: {}\n\n", event, data);
+            let _ = tx.send(Bytes::from(sse)).await;
+        }
+        tracing::info!("wrap_stream_as_responses — upstream stream exhausted, final events sent");
+    });
+
+    let stream = ReceiverStream::new(rx).map(|b| Ok::<_, std::convert::Infallible>(b));
+    let resp = Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap_or_default();
+    tracing::info!("wrap_stream_as_responses — SSE response built, returning");
+    Ok(resp)
+}
+
 async fn responses_handler(
     State(state): State<Arc<ProxyState>>,
     headers: HeaderMap,
@@ -610,44 +792,184 @@ async fn responses_handler(
         .unwrap_or(false);
     let session_id = state.sessions.get_session(&user);
 
-    // Convert Responses API `input` to Chat Completions `messages`
-    let messages = match body.get("input") {
+    // ── Convert Responses API request to Chat Completions format ────────
+
+    let mut messages = match body.get("input") {
         Some(serde_json::Value::String(s)) => {
-            serde_json::json!([{"role": "user", "content": s}])
+            serde_json::json!([responses::normalize_message(&serde_json::json!({"role": "user", "content": s}))])
         }
         Some(serde_json::Value::Array(arr)) if !arr.is_empty() => {
-            // Try to interpret as message objects; otherwise wrap as user text
             if arr[0].get("role").is_some() {
-                serde_json::Value::Array(arr.clone())
+                let msgs: Vec<serde_json::Value> = arr.iter().map(responses::normalize_message).collect();
+                serde_json::json!(msgs)
             } else {
-                // Array of input_text/input_image items — extract text
                 let texts: Vec<String> = arr.iter()
                     .filter_map(|item| item.get("text").and_then(|t| t.as_str()).map(String::from))
                     .collect();
                 if texts.is_empty() {
-                    serde_json::json!([{"role": "user", "content": serde_json::Value::Array(arr.clone())}])
+                    serde_json::json!([responses::normalize_message(&serde_json::json!({"role": "user", "content": serde_json::Value::Array(arr.clone())}))])
                 } else {
-                    serde_json::json!([{"role": "user", "content": texts.join("\n")}])
+                    serde_json::json!([responses::normalize_message(&serde_json::json!({"role": "user", "content": texts.join("\n")}))])
                 }
             }
         }
         _ => serde_json::json!([]),
     };
 
-    // Convert max_output_tokens to max_tokens
+    // Prepend `instructions` as a system message if present.
+    if let Some(inst) = body.get("instructions").and_then(|i| i.as_str()) {
+        if !inst.is_empty() {
+            if let Some(arr) = messages.as_array_mut() {
+                arr.insert(0, serde_json::json!({"role": "system", "content": inst}));
+            }
+        }
+    }
+
     let mut converted_body = body.clone();
     if let Some(mot) = body.get("max_output_tokens") {
         converted_body["max_tokens"] = mot.clone();
     }
+    responses::strip_responses_fields(&mut converted_body);
 
     info!(
         user = %user,
         model = %model,
         stream = %stream,
-        "OpenAI Responses API (converted to Chat Completions)"
+        body_preview = %serde_json::to_string(&body).unwrap_or_default().chars().take(500).collect::<String>(),
+        "OpenAI Responses API — request received"
     );
 
-    route_chat_completion(state, user, model, messages, stream, session_id, converted_body).await
+    // ── Build model list from pool (same routing as route_chat_completion) ──
+    let pool = state.model_pool.read().await;
+    let mut models: Vec<String> = Vec::new();
+    let mut model_entry_ids: Vec<String> = Vec::new();
+    let mut custom_routes: Vec<(String, String, String)> = Vec::new();
+    if model == "ModelPool" {
+        for e in pool.get_enabled() {
+            models.push(e.model_name.clone());
+            model_entry_ids.push(e.id.clone());
+            if !e.base_url.is_empty() {
+                custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
+            } else {
+                custom_routes.push((String::new(), String::new(), String::new()));
+            }
+        }
+    } else if let Some(e) = pool.get_by_name(&model) {
+        if e.enabled {
+            models.push(e.model_name.clone());
+            model_entry_ids.push(e.id.clone());
+            if !e.base_url.is_empty() {
+                custom_routes.push((e.base_url.clone(), e.api_key.clone(), e.api_format.clone()));
+            } else {
+                custom_routes.push((String::new(), String::new(), String::new()));
+            }
+        }
+    }
+    if models.is_empty() {
+        models.push(model.clone());
+        model_entry_ids.push(String::new());
+        custom_routes.push((String::new(), String::new(), String::new()));
+    }
+    drop(pool);
+
+    // ── Failover loop ──────────────────────────────────────────────────
+    let mut last_error = String::from("All models failed");
+    for (i, m) in models.iter().enumerate() {
+        let (req_body, body_str) = ZenClient::build_request_body(m, &messages, stream, None, Some(&converted_body));
+        let (ref base_url, ref api_key, ref _api_format) = custom_routes[i];
+
+        info!(
+            attempt = i + 1,
+            total = models.len(),
+            model = %m,
+            stream = %stream,
+            body_keys = ?req_body.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()),
+            "Responses API — trying model"
+        );
+
+        let result: Result<Response, String> = if !base_url.is_empty() {
+            // ── Custom provider ────────────────────────────────────────
+            let client = custom_http_client();
+            let url = build_api_url(base_url, "/v1/chat/completions");
+            match client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .body(body_str.clone())
+                .send()
+                .await
+            {
+                Ok(upstream) => {
+                    let http_status = upstream.status();
+                    if http_status != 200 {
+                        let text = upstream.text().await.unwrap_or_default();
+                        Err(format!("{}: {}", http_status.as_u16(), text))
+                    } else if stream {
+                        wrap_stream_as_responses(upstream, m).await
+                    } else {
+                        match upstream.json::<serde_json::Value>().await {
+                            Ok(json) => {
+                                if json.get("error").is_some() {
+                                    let msg = json.pointer("/error/message").and_then(|m| m.as_str()).unwrap_or("Unknown");
+                                    Err(format!("Upstream error: {}", msg))
+                                } else {
+                                    Ok(Json(responses::chat_to_responses(&json, m)).into_response())
+                                }
+                            }
+                            Err(e) => Err(format!("Parse error: {}", e)),
+                        }
+                    }
+                }
+                Err(e) => Err(format!("Request error: {}", e)),
+            }
+        } else if stream {
+            match state.zen.send_streaming(body_str.clone(), &session_id).await {
+                Ok(upstream) => wrap_stream_as_responses(upstream, m).await,
+                Err(e) => Err(format!("Request error: {}", e)),
+            }
+        } else {
+            match state.zen.send_non_streaming(body_str.clone(), &session_id).await {
+                Ok((status, json)) => {
+                    if status != 200 || ZenClient::is_error(&json) {
+                        let msg = ZenClient::extract_error(&json);
+                        Err(format!("{}: {}", status.as_u16(), msg))
+                    } else {
+                        Ok(Json(responses::chat_to_responses(&json, m)).into_response())
+                    }
+                }
+                Err(e) => Err(format!("Request error: {}", e)),
+            }
+        };
+
+        match result {
+            Ok(response) => {
+                info!("Responses API — success on {} (attempt {}/{})", m, i + 1, models.len());
+                if !model_entry_ids[i].is_empty() {
+                    *state.active_model_id.write().await = Some(model_entry_ids[i].clone());
+                    *state.active_at.write().await = Some(std::time::SystemTime::now());
+                }
+                return response;
+            }
+            Err(e) => {
+                info!("Responses API — entry {} failed (attempt {}/{}): {}", m, i + 1, models.len(), e);
+                if m != models.last().unwrap() {
+                    info!("Responses API — failover: {} -> next", m);
+                    last_error = format!("{}: {}", m, e);
+                    continue;
+                }
+                last_error = format!("{}: {}", m, e);
+                break;
+            }
+        }
+    }
+
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": {"message": last_error, "type": "failover_error"}
+        })),
+    )
+        .into_response()
 }
 
 async fn route_chat_completion(

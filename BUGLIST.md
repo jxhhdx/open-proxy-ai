@@ -139,6 +139,51 @@ let secs = d.as_secs() % 86400;  // 纯 UTC
 
 ---
 
+## BUG-005: `/v1/responses` 返回 Chat Completions 格式而非 Responses API 格式
+
+- **发现日期**: 2026-06-13
+- **严重程度**: 高（Codex 直接报错 404 / stream disconnected）
+- **状态**: 已修复
+
+### 现象
+
+Codex (v0.139.0) 调用 `/v1/responses` 时：
+1. 首次请求返回 `404 Not Found`（路由不存在的问题在之前的 commit 已修复）
+2. 后续请求返回 `stream disconnected before completion: stream closed before response.completed`
+
+### 根因
+
+`responses_handler` 将 Responses API 请求（`input`、`max_output_tokens`）转换后通过 `route_chat_completion` 发送，但**响应的数据格式仍然是 Chat Completions 格式**（`choices[].message.content`），而 Codex 期望的是 **Responses API 格式**（`output[].content[].text`、SSE 事件 `response.completed` 等）。
+
+非流式场景返回了 Chat Completions JSON → Codex 解析失败。流式场景返回了 Chat Completions SSE（`data: {...}\n\n`）→ Codex 没看到 `response.completed` 事件 → 报 `stream disconnected`。
+
+### 修复
+
+新增 `src-tauri/src/proxy/responses.rs` 模块，包含：
+
+1. **`chat_to_responses()`** — 非流式转换：将 Chat Completions JSON 转为 Responses API JSON（`object: "response"`、`output[]` 结构）
+2. **`ResponsesSseConverter`** — 流式 SSE 转换器，将 Chat Completions SSE 转为 Responses API SSE 事件：
+   - `response.created` → `response.output_item.added` → `response.content_part.added` → `response.output_text.delta` → `response.output_text.done` → `response.completed`
+   - 非 `stop` 的 finish_reason 附加 `response.incomplete` 事件
+
+修改 `responses_handler`，不再委托给 `route_chat_completion`，而是自己处理完整流程（模型池路由 → 发送请求 → 格式转换 → 返回）。
+
+### 如何防止复发
+
+1. 单元测试覆盖了 Responses API 格式转换：
+   - `test_chat_to_responses_basic` — 非流式转换验证
+   - `test_chat_to_responses_empty_content` — 空响应处理
+   - `test_responses_sse_converter_delta` — SSE delta 事件
+   - `test_responses_sse_converter_finish` — SSE finish/stop
+   - `test_responses_sse_converter_incomplete_finish` — 非 stop 的 incomplete 事件
+   - `test_responses_sse_converter_initial_events` — 初始事件
+   - `test_responses_sse_converter_final_events` — 结束事件
+   - `test_responses_sse_converter_double_finish_noop` — 防重复结束
+2. 端到端测试 `test_bugs.sh` 验证了 `/v1/responses` 的响应格式（object=response、output[].type=message）
+3. 流式 SSE 格式验证（包含 response.created / output_text.delta / response.completed 事件）
+
+---
+
 ## Bug 提交流程
 
 1. 发现 bug → 在此文件新增条目

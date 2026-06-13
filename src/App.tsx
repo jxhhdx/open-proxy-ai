@@ -41,6 +41,12 @@ function AppInner() {
 
   useEffect(() => { refresh(); }, []);
 
+  // Poll pool status every 500ms to catch active_model_id changes
+  useEffect(() => {
+    const id = setInterval(refresh, 500);
+    return () => clearInterval(id);
+  }, [refresh]);
+
   return (
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 24px" }}>
       <Header status={status} loading={loading} onRefresh={refresh} onSettings={() => setShowSettings(true)} />

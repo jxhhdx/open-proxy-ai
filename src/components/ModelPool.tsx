@@ -47,9 +47,9 @@ export default function ModelPool({ entries, results, setResults, onRefresh, sho
   const [tick, setTick] = useState(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  // Re-render every 2s so the active indicator (10s timeout) updates in real-time
+  // Re-render every 500ms so the active indicator (10s timeout) updates in real-time
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 2000);
+    const id = setInterval(() => setTick(t => t + 1), 500);
     return () => clearInterval(id);
   }, []);
 
